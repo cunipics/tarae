@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="ko" dir="ltr">
+   	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" id="meta_viewport" content="width=device-width,initial-scale=1.0,minimum-scale=0,maximum-scale=10">
+		<title>홈페이지</title>
+		<script src="/_js/jquery-3.1.1.min.js"></script>
+		<script src="/_js/jquery-ui.js"></script>
+		<script src="/_js/loadingoverlay.min.js"></script>
+		<script src="/_js/common.js"></script>
+		<script src="/_js/slick.js"></script>
+		<script src="/_js/main.js"></script>
+		<script src="/_js/util.js"></script>
+		<link rel="shortcut icon" href="/_img/favicon.ico">
+		<link rel="stylesheet" href="/_css/common.css">
+		<link rel="stylesheet" href="/_css/main.css">
+		<link rel="stylesheet" href="/_css/member.css">
+   	</head>
+   	<body >
+	<div id="wrap">
+		<header id="header" class="">
+		<div class="wide">
+			<div class="wfix">
+		   <h1 id="h1">
+			  <a href="/main/main.html" class="logo">
+				 <span class="logoimg"><img src="/_img/layout/logo-katech.png" alt="홈페이지"/></span>
+				 <span class="logotitle">홈페이지</span>
+			  </a>
+			  <div class="navi_left"></div>
+		   </h1>
+		   <div id="menu">
+			  <ul class="lst">
+			<%
+			if(menus.length > 0){
+				for(let i=0;i< menus.length;i++){
+			%>
+            <li class="d1">
+                <a href="/content/${row.get('cid')}/view" class="d1_link">${row.get('title')}</a>
+                <button type="button" class="d1_tit">${row.get('title')}</button>
+                <ul class="sub">
+                <%
+                if(submenus.length > 0){
+                    var j=0;
+                    for(let k=0;k < submenus.length;k++){
+                        var len = menus[i].thread.length;
+                        if(submenus[k].thread.substring(0,len) != menus[i].thread){
+                            continue;
+                        }
+                        if(j==0){var firstcid=submenus[k].cid;}
+                %>
+                    <li class="d2"><a href="/content/<%=submenus[k].cid%>"><%=submenus[k].title%></a></li>
+                <%
+                        j++;
+                    }//end for
+                }//end if
+                %>		
+			  </ul>
+              </li>
+          	<%
+				}//end for
+			}//end if
+			%>    
+			</ul>
+		   </div>
+		  <div id="rightMenu">
+			  <ul class="lst">
+				 <li><a href="/member/login.html" class="btn_member"><i class="icon_hmember">회원정보</i></a></li>
+				 <!--<li><a href="javascript:;" class="btn_login"><i class="ico_comm">로그인</i></a></li>-->
+				 <li><a href="javascript:;" class="btn_logout"><i class="icon_hlogout">로그아웃</i></a></li>
+				 <li><a href="javascript:;" onclick="openSchWrap()" class="btn_search"><i class="icon_hsearch">검색</i></a></li>
+				 <li> <button type="button" onclick="tglAllMenu();" class="btn_menu">
+				 <span class="blind">전체메뉴 열기</span>
+			  </button></li>
+			  </ul>
+			 
+		   </div>
+		</div>
+	</div>
+		<div id="search">
+		   <div class="inr">
+			  <div class="wrap_sch">
+				 <label for="inpSch" class="searchbtn">통합검색</label>
+				 <input type="search" id="inpSch" class="inp_sch" placeholder="검색어를 입력해주세요.">
+			  </div>
+			  <ul class="lst_sch">
+				 <li><a href="#" class="keyword">기업명</a></li>
+				 <li><a href="#" class="keyword">산업정보</a></li>
+				 <li><a href="#" class="keyword">기술</a></li>
+			  </ul>
+		   </div>
+		   <div class="wrap_close">
+			  <div class="wide">
+				 <button type="button" onclick="closeSchWrap()" class="close">통합검색 닫기</button>
+			  </div>
+		   </div>
+		</div>
+	 </header>
+

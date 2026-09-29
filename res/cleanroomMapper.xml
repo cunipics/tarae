@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cleanroomMapper">
+
+    <!-- 데이터 정화소 전체 목록 조회 (타입 조건 검색 가능) -->
+    <select id="selectCleanroomList">
+        SELECT 
+            id,
+            pattern_type,
+            pattern_text,
+            source_finding_id,
+            source_url,
+            required_terms,
+            memo,
+            created_at,
+            updated_at
+        FROM t_cleanroom
+        WHERE 1=1
+        <if test="pattern_type != null and pattern_type != ''">
+            AND pattern_type = #{pattern_type}
+        </if>
+        ORDER BY id DESC
+    </select>
+
+    <!-- 단건 조회 -->
+    <select id="selectCleanroomById">
+        SELECT 
+            id,
+            pattern_type,
+            pattern_text,
+            source_finding_id,
+            source_url,
+            required_terms,
+            memo,
+            created_at,
+            updated_at
+        FROM t_cleanroom
+        WHERE id = #{id}
+    </select>
+
+    <!-- 특정 상태별 패턴 문자열 목록 조회 (AI 엔진 및 탐지 규칙 연동용) -->
+    <select id="selectPatternsByType">
+        SELECT pattern_text
+        FROM t_cleanroom
+        WHERE pattern_type = #{pattern_type}
+        ORDER BY id ASC
+    </select>
+
+    <!-- 4단계(WAIT, SUSPECT, POLLUTED, EXCEPTION) 상태별 건수 통계 조회 -->
+    <select id="countCleanroomByType">
+        SELECT pattern_type, count(*) as cnt
+        FROM t_cleanroom
+        GROUP BY pattern_type
+    </select>
+
+    <!-- 신규 패턴 등록 -->
+    <insert id="insertCleanroom">
+        INSERT INTO t_cleanroom (
+            pattern_type,
+            pattern_text,
+            source_finding_id,
+            source_url,
+            required_terms,
+            memo,
+            created_at,
+            updated_at
+        ) VALUES (
+            #{pattern_type},
+            #{pattern_text},
+            #{source_finding_id},
+            #{source_url},
+            #{required_terms},
+            #{memo},
+            datetime('now', 'localtime'),
+            datetime('now', 'localtime')
+        )
+    </insert>
+
+    <!-- 리스트 간 상태 이동 (WAIT, POLLUTED, CLEAN) -->
+    <update id="updateCleanroomStatus">
+        UPDATE t_cleanroom
+        SET 
+            pattern_type = #{pattern_type},
+            updated_at = datetime('now', 'localtime')
+        WHERE id = #{id}
+    </update>
+
+    <!-- 패턴 문구 및 메모 수정 -->
+    <update id="updateCleanroomText">
+        UPDATE t_cleanroom
+        SET 
+            pattern_text = #{pattern_text},
+            updated_at = datetime('now', 'localtime')
+            <if test="required_terms != null">
+                , required_terms = #{required_terms}
+            </if>
+            <if test="memo != null">
+                , memo = #{memo}
+            </if>
+        WHERE id = #{id}
+    </update>
+
+    <!-- 패턴 텍스트로 중복 조회 (대소문자/공백 무관 검색 지원) -->
+    <select id="selectCleanroomByText">
+        SELECT id, pattern_type, pattern_text, memo
+        FROM t_cleanroom
+        WHERE TRIM(pattern_text) = #{pattern_text}
+    </select>
+
+    <!-- 패턴 텍스트로 중복 조회 (특정 ID 제외) -->
+    <select id="selectCleanroomByTextExcludeId">
+        SELECT id, pattern_type, pattern_text, memo
+        FROM t_cleanroom
+        WHERE TRIM(pattern_text) = #{pattern_text}
+          AND id != #{exclude_id}
+    </select>
+
+    <!-- 리스트 간 상태 이동 및 설명 갱신 -->
+    <update id="updateCleanroomStatusAndMemo">
+        UPDATE t_cleanroom
+        SET 
+            pattern_type = #{pattern_type},
+            memo = #{memo},
+            updated_at = datetime('now', 'localtime')
+        WHERE id = #{id}
+    </update>
+
+    <!-- 패턴 영구 삭제 -->
+    <delete id="deleteCleanroom">
+        DELETE FROM t_cleanroom
+        WHERE id = #{id}
+    </delete>
+
+</mapper>

@@ -1,0 +1,218 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="detectMapper">
+
+  <!-- 점검 마스터 생성 -->
+  <insert id="insertDetectMaster">
+    INSERT INTO t_detect (entry_url, title, status, started_at, tool_version, created_at)
+    VALUES (#{entry_url}, #{title}, 'RUNNING', datetime('now', 'localtime'), #{tool_version}, datetime('now', 'localtime'))
+  </insert>
+
+  <!-- 점검 마스터 타이틀 갱신 -->
+  <update id="updateDetectMasterTitle">
+    UPDATE t_detect
+    SET title = #{title}
+    WHERE id = #{id}
+  </update>
+
+  <update id="updateDetectMasterCms">
+    UPDATE t_detect SET detected_cms = #{detected_cms} WHERE id = #{id}
+  </update>
+
+  <!-- 점검 마스터 완료/중지 갱신 -->
+  <update id="updateDetectMasterComplete">
+    UPDATE t_detect
+    SET status = #{status},
+        finished_at = datetime('now', 'localtime'),
+        elapsed_sec = #{elapsed_sec},
+        total_pages = #{total_pages},
+        violation_count = #{violation_count}
+    WHERE id = #{id}
+  </update>
+
+  <!-- 점검 마스터 상태 갱신 -->
+  <update id="updateDetectMasterStatus">
+    UPDATE t_detect
+    SET status = #{status}
+    WHERE id = #{id}
+  </update>
+
+  <!-- 적발 항목 등록 -->
+  <insert id="insertDetectFinding">
+    INSERT INTO t_detect_list (
+      master_id, finding_id, url, is_violation, location, evidence_text, technique, extra_finding, created_at
+    ) VALUES (
+      #{master_id}, #{finding_id}, #{url}, #{is_violation}, #{location}, #{evidence_text}, #{technique}, #{extra_finding},
+      datetime('now', 'localtime')
+    )
+    ON CONFLICT DO NOTHING
+  </insert>
+
+  <!-- 탐색 트리 노드 등록 -->
+  <insert id="insertDetectNode">
+    INSERT OR REPLACE INTO t_detect_node (
+      master_id, parent_id, depth, url, path_segment, title, http_status, has_violation, violation_cnt, created_at
+    ) VALUES (
+      #{master_id}, #{parent_id}, #{depth}, #{url}, #{path_segment}, #{title}, #{http_status}, #{has_violation}, #{violation_cnt},
+      datetime('now', 'localtime')
+    )
+  </insert>
+
+  <!-- AI 추론 및 대화 로그 등록 (영어로 물어본 값, 한국어로 대답한 값, 불법 판단 여부, 유사도 검색 값) -->
+  <insert id="insertDetectLog">
+    INSERT INTO t_detect_log (
+      master_id, url, input_ko, prompt_en, response_en, response_ko,
+      similarity_val, is_illegal, confidence, model_name, device_mode, created_at
+    ) VALUES (
+      #{master_id}, #{url}, #{input_ko}, #{prompt_en}, #{response_en}, #{response_ko},
+      #{similarity_val}, #{is_illegal}, #{confidence}, #{model_name}, #{device_mode},
+      datetime('now', 'localtime')
+    )
+  </insert>
+
+  <!-- AI 추론 로그 목록 조회 -->
+  <select id="selectDetectLogs">
+    SELECT id, master_id, url, input_ko, prompt_en, response_en, response_ko,
+           similarity_val, is_illegal, confidence, model_name, device_mode, created_at
+    FROM t_detect_log
+    WHERE master_id = #{master_id}
+    ORDER BY id DESC
+    LIMIT 100
+  </select>
+
+  <!-- 점검 마스터 단건 조회 -->
+  <select id="selectDetectMaster">
+    SELECT t.id, t.entry_url, t.title, t.detected_cms, t.status, t.started_at, t.finished_at,
+           CASE WHEN t.elapsed_sec > 0 THEN t.elapsed_sec
+                ELSE COALESCE(MAX(0, CAST(ROUND((julianday(t.finished_at) - julianday(t.started_at)) * 86400) AS INTEGER)), 0)
+           END AS elapsed_sec,
+           t.total_pages,
+           (SELECT COUNT(*) FROM (SELECT f.url, f.location, f.technique FROM t_detect_list f
+             WHERE f.master_id = t.id GROUP BY f.url, f.location, f.technique)) AS violation_count,
+           t.tool_version, t.created_at
+    FROM t_detect t
+    WHERE t.id = #{id}
+  </select>
+
+  <select id="selectDetectSolution">
+    SELECT master_id, finding_id, target_text, clean_title, clean_body, updated_at
+    FROM t_detect_solution
+    WHERE master_id = #{master_id} AND finding_id = #{finding_id}
+  </select>
+
+  <insert id="upsertDetectSolution">
+    INSERT INTO t_detect_solution (master_id, finding_id, target_text, clean_title, clean_body, updated_at)
+    VALUES (#{master_id}, #{finding_id}, #{target_text}, #{clean_title}, #{clean_body}, datetime('now', 'localtime'))
+    ON CONFLICT (master_id, finding_id) DO UPDATE SET
+      target_text = excluded.target_text,
+      clean_title = excluded.clean_title,
+      clean_body = excluded.clean_body,
+      updated_at = excluded.updated_at
+  </insert>
+
+  <!-- 점검 적발 목록 조회 -->
+  <select id="selectDetectFindings">
+    SELECT id, master_id, finding_id, url, is_violation, location, evidence_text, technique, extra_finding, created_at
+    FROM t_detect_list
+    WHERE master_id = #{master_id}
+    ORDER BY id ASC
+  </select>
+
+  <select id="selectDetectFindingForSolution">
+    SELECT finding_id FROM t_detect_list
+    WHERE master_id = #{master_id} AND finding_id = #{finding_id}
+    LIMIT 1
+  </select>
+
+  <!-- 점검 탐색 트리 노드 조회 -->
+  <select id="selectDetectNodes">
+    SELECT id, master_id, parent_id, depth, url, path_segment, title, http_status, has_violation, violation_cnt, created_at
+    FROM t_detect_node
+    WHERE master_id = #{master_id}
+    ORDER BY id ASC
+  </select>
+
+  <!-- 대시보드 점검 마스터 총 건수 조회 (검색 필터 지원) -->
+  <select id="selectDetectMasterCount">
+    SELECT COUNT(*) AS total_count
+    FROM t_detect
+    WHERE 1=1
+    <if test="keyword != null and keyword != ''">
+      AND (entry_url LIKE '%' || #{keyword} || '%' OR title LIKE '%' || #{keyword} || '%')
+    </if>
+    <if test="statusFilter != null and statusFilter != ''">
+      AND status = #{statusFilter}
+    </if>
+  </select>
+
+  <!-- 대시보드 전체 점검 마스터 목록 조회 -->
+  <select id="selectDetectMasterList">
+    SELECT id, entry_url, title, status, started_at, finished_at, elapsed_sec, total_pages, violation_count, tool_version, created_at
+    FROM t_detect
+    ORDER BY id DESC
+    LIMIT 50
+  </select>
+
+  <!-- 대시보드 페이징 점검 마스터 목록 조회 (Read Per Page 30, 검색 필터 지원) -->
+  <select id="selectDetectMasterListPage">
+    SELECT t.id, t.entry_url, t.title, t.status, t.started_at, t.finished_at,
+           CASE WHEN t.elapsed_sec > 0 THEN t.elapsed_sec
+                ELSE COALESCE(MAX(0, CAST(ROUND((julianday(t.finished_at) - julianday(t.started_at)) * 86400) AS INTEGER)), 0)
+           END AS elapsed_sec,
+           t.total_pages,
+           (SELECT COUNT(*) FROM (SELECT f.url, f.location, f.technique FROM t_detect_list f
+             WHERE f.master_id = t.id GROUP BY f.url, f.location, f.technique)) AS violation_count,
+           t.tool_version, t.created_at
+    FROM t_detect t
+    WHERE 1=1
+    <if test="keyword != null and keyword != ''">
+      AND (t.entry_url LIKE '%' || #{keyword} || '%' OR t.title LIKE '%' || #{keyword} || '%')
+    </if>
+    <if test="statusFilter != null and statusFilter != ''">
+      AND t.status = #{statusFilter}
+    </if>
+    ORDER BY t.id DESC
+    LIMIT #{limit} OFFSET #{offset}
+  </select>
+
+  <!-- 대시보드 요약 통계 -->
+  <select id="selectDetectSummaryStats">
+    SELECT 
+      COUNT(*) AS total_sites,
+      COALESCE(SUM(total_pages), 0) AS total_pages,
+      (SELECT COUNT(*) FROM (SELECT master_id, url, location, technique FROM t_detect_list
+        GROUP BY master_id, url, location, technique)) AS total_violations,
+      SUM(CASE WHEN status = 'COMPLETED' THEN 1 ELSE 0 END) AS completed_sites
+    FROM t_detect
+  </select>
+
+  <!-- 대시보드 기법별 통계 -->
+  <select id="selectDetectTechniqueStats">
+    SELECT technique, COUNT(*) AS cnt
+    FROM (SELECT master_id, url, location, technique FROM t_detect_list
+      WHERE is_violation = 1 GROUP BY master_id, url, location, technique)
+    GROUP BY technique
+  </select>
+
+  <!-- 대시보드 불법광고 카테고리별 실시간 통계 -->
+  <select id="selectDetectCategoryStats">
+    SELECT 
+      COALESCE(SUM(CASE WHEN evidence_text LIKE '%카지노%' OR evidence_text LIKE '%슬롯%' OR evidence_text LIKE '%바카라%' OR evidence_text LIKE '%토토%' OR evidence_text LIKE '%베팅%' OR evidence_text LIKE '%BET%' OR evidence_text LIKE '%놀이터%' OR evidence_text LIKE '%먹튀%' OR evidence_text LIKE '%충전%' THEN 1 ELSE 0 END), 0) AS gambling_cnt,
+      COALESCE(SUM(CASE WHEN evidence_text LIKE '%성인%' OR evidence_text LIKE '%조건%' OR evidence_text LIKE '%출장%' OR evidence_text LIKE '%야동%' OR evidence_text LIKE '%섹스%' OR evidence_text LIKE '%만남%' OR evidence_text LIKE '%애인%' THEN 1 ELSE 0 END), 0) AS adult_cnt,
+      COALESCE(SUM(CASE WHEN evidence_text LIKE '%대출%' OR evidence_text LIKE '%소액%' OR evidence_text LIKE '%일수%' OR evidence_text LIKE '%현금화%' OR evidence_text LIKE '%폰테크%' OR evidence_text LIKE '%월변%' THEN 1 ELSE 0 END), 0) AS loan_cnt,
+      COUNT(*) AS total_cnt
+    FROM t_detect_list
+    WHERE is_violation = 1
+  </select>
+
+  <!-- AI 평가 정확도 및 현재까지 유사도 평가 평균 통계 -->
+  <select id="selectDetectAiAccuracy">
+    SELECT 
+      COUNT(*) AS total_cnt,
+      COALESCE(ROUND(AVG(similarity_val * 100), 1), 0) AS avg_sim_score,
+      COALESCE(ROUND(AVG(confidence), 1), 0) AS avg_confidence,
+      SUM(CASE WHEN is_illegal = 1 THEN 1 ELSE 0 END) AS illegal_cnt
+    FROM t_detect_log
+  </select>
+
+</mapper>

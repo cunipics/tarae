@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="ko" dir="ltr">
+   	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" id="meta_viewport" content="width=device-width,initial-scale=1.0,minimum-scale=0,maximum-scale=10">
+		<title>홈페이지</title>
+		<link rel="stylesheet" href="/_css/font.css">
+		<link rel="stylesheet" href="/_css/common.css">
+		<link rel="stylesheet" href="/_css/contents.css">
+		<link rel="icon" href="/_img/favicon.ico" type="image/gif">
+		<script type="text/javascript" src="/_js/jquery-3.1.1.min.js"></script>
+		<script type="text/javascript" src="/_js/jquery-ui.min.js"></script>
+		<script type="text/javascript" src="/_js/common.js"></script>
+		<script src="/_js/util.js"></script>
+		<script src="/_js/slick.min.js"></script>
+		<script src="/_js/loadingoverlay.min.js"></script>
+   	</head>
+   	<body >
+	<div id="wrap" class="main">
+		<header id="header" class="">
+
+
+		   <h1 id="h1">
+			  <a href="/main/index" class="logo">
+				 <img src="/_img/layout/logo-katech.png" alt="홈페이지"/>
+			  </a>
+		   </h1>
+            <nav id="nav" class="ico_bfr ico_aft">
+               <a href="javascript:;" class="tgl" ><i>전체 메뉴 열기/닫기</i></a>
+               <div class="wrap_menu" id="menu">
+                  <h2 class="blind">전체메뉴</h2>
+					<ul class="lst">
+					<%_ if (menus && menus.length > 0) { _%>
+						<%_ for (let i = 0; i < menus.length; i++) { _%>
+							<%_ const row = menus[i]; _%>
+							<li>
+								<a href="/content/<%= row.cid %>" class="d1"><%= row.title _%></a>
+								<a href="javascript:;" class="lab mo ico_aft"><%= row.title _%></a>
+
+								<ul class="sub">
+								<%_ if (submenus && submenus.length > 0) { _%>
+									<%_ let j = 0; _%>
+									<%_ for (let k = 0; k < submenus.length; k++) { _%>
+										<%_ const sub = submenus[k]; _%>
+										<%_ const len = row.thread.length; _%>
+										<%_ if (sub.thread.substring(0, len) !== row.thread) { continue; } _%>
+										<%_ if (j === 0) { var firstcid = sub.cid; } _%>
+										<li>
+											<a href="/content/<%= sub.cid %>"><%= sub.title _%></a>
+										</li>
+									<%_ j++; _%>
+									<%_ } _%>
+								<%_ } _%>
+								</ul>
+							</li>
+						<%_ } _%>
+					<%_ } _%>
+					</ul>
+				</div>
+			</nav>
+	 </header>
+
+	<% if(cate != "main"){ %>
+         <!-- 타이틀 & 서브메뉴 -->
+         <div id="subTop">
+            <div class="wrap_location sub1">
+               <div class="wfix  ">
+				 <ul class="location">
+                     <li><a href="/" class="inr"><i class="ico_comm">홈으로</i></a></li>
+                     <li>	
+						 <div class="dropdown inr">
+							<button class="dropbtn fpx16">소개 <i class="arrow_wh"></i></button>
+							<div class="dropdown-content fpx14">
+								<a href="#">소개</a>
+								<a href="#">찾아오시는길 </a>
+								<a href="#">전문</a>
+							</div>
+						 </div>	
+					 </li>
+                     <li>
+					 <span class="inr">소개</span>
+					 </li>
+                  </ul>
+                  <h3 class="category fpx30">소개</h3>
+               </div>
+            </div>
+			<div class="wrap_sub mobile">
+               <ul class="wfix">
+					<li class="on"><a href="#">소개</a></li>
+					<li><a href="#">찾아오시는길 </a></li>
+					<li><a href="#">전문</a></li>
+				 </ul>
+            </div>
+         </div>
+
+         <!-- //타이틀 & 서브메뉴 -->
+	<div class="sub1">	
+	<% } %>	
+    	<%- body %>	
+	<% if(cate != "main"){ %>
+	</div><!--sub1-->
+	<% } %>
+
+<footer id="footer">
+   <div class="ft_cont">
+      <div class="wfix">
+         <ul class="links">
+            <li class="ft_blue"><a href="/">개인정보 취급방침</a></li>
+            <li><a href="/">이메일무단수집거부</a></li>
+         </ul>
+         <div class="ft_info">
+            <dl>
+               <dt>주소.</dt>
+               <dd>우편번호 000000 서울시 마포구 </dd>
+            </dl>
+            <dl class="mont">
+               <dt>TEL.</dt>
+               <dd>02-0000-0000,0002</dd>
+            </dl>
+            <dl class="mont">
+               <dt>FAX.</dt>
+               <dd>02-0000-0000</dd>
+            </dl>
+			<dl class="mont">
+               <dt>통신판매번호.</dt>
+               <dd>0000-00000</dd>
+            </dl>
+            <p class="copyright">Powered by 온디바이스 AI | 탐색 시간과 횟수에 관계없이 비용이 발생하지 않습니다.</p>
+         </div>
+		 <div class="totop_btn">
+			<a href="#header" class="totop"><i class="ico_comm">맨 위로</i></a>
+		 </div>	
+      </div>
+   </div>
+</footer>
+
+</div>
+
+
+
+</body>
+</html>

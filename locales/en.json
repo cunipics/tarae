@@ -1,0 +1,11 @@
+{
+  "hello": "Hello",
+  "login": "Login",
+  "logout": "Logout",
+  "login_result": "Login Result",
+  "login_failed": "Login failed",
+  "admin_dashboard": "Admin Dashboard",
+  "recent_users": "Recent Users",
+  "menu": "Menu",
+  "menu.dashboard": "Dashboard"
+}

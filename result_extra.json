@@ -1,0 +1,39 @@
+{
+  "meta": {
+    "topic": "TOPIC",
+    "entry_url": "https://seekle.or.kr/",
+    "started_at": "2026-09-28T21:47:00.071Z",
+    "finished_at": "2026-09-28T22:15:27.706Z",
+    "elapsed_sec": 1708,
+    "tool_version": "1.0.0"
+  },
+  "findings": [
+    {
+      "id": "f_001",
+      "url": "https://www.seekle.or.kr/sub07/sub01.php?ptype=view&idx=20004&page=39&code=notice0&searchopt=&searchkey=2023",
+      "is_violation": true,
+      "location": "div.is-sub > div.container-wrap > div:nth-of-type(1) > div.sub-content-wrap > div:nth-of-type(2) > table.AWbbs_view_table > tbody:nth-of-type(1) > tr:nth-of-type(4) > td.AWbbs_view_content",
+      "evidence_text": "신청방법: 구글폼 접수 https://docs.google.com/forms/d/e/1FAIpQLSd2x7TBWwCZ7aP4dhWDKcQ3Rad8K9xMJmkRbB74sTsWJiQ4uQ/viewform? usp=sf_lin...",
+      "technique": "ETC",
+      "extra_finding": "노출 텍스트 의심 패턴 판정"
+    },
+    {
+      "id": "f_002",
+      "url": "https://www.seekle.or.kr/sub07/sub01.php?ptype=view&idx=20004&page=39&code=notice0&searchopt=&searchkey=2023",
+      "is_violation": true,
+      "location": "div.is-sub > div.container-wrap > div:nth-of-type(1) > div.sub-content-wrap > div:nth-of-type(2) > table.AWbbs_view_table > tbody:nth-of-type(1) > tr:nth-of-type(4) > td.AWbbs_view_content > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(1) > td:nth-of-type(1) > p:nth-of-type(23)",
+      "evidence_text": "7. 신청방법: 구글폼 접수 https://docs.google.com/forms/d/e/1FAIpQLSd2x7TBWwCZ7aP4dhWDKcQ3Rad8K9xMJmkRbB74sTsWJiQ4uQ/viewform? usp=sf_lin...",
+      "technique": "ETC",
+      "extra_finding": "노출 텍스트 의심 패턴 판정"
+    },
+    {
+      "id": "f_003",
+      "url": "https://www.seekle.or.kr/sub07/sub01.php?ptype=view&idx=20004&page=39&code=notice0&searchopt=&searchkey=2023",
+      "is_violation": true,
+      "location": "div.is-sub > div.container-wrap > div:nth-of-type(1) > div.sub-content-wrap > div:nth-of-type(2) > table.AWbbs_view_table > tbody:nth-of-type(1) > tr:nth-of-type(4) > td.AWbbs_view_content > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(1) > td:nth-of-type(1) > p:nth-of-type(23) > span:nth-of-type(1) > a:nth-of-type(1)",
+      "evidence_text": "https://docs.google.com/forms/d/e/1FAIpQLSd2x7TBWwCZ7aP4dhWDKcQ3Rad8K9xMJmkRbB74sTsWJiQ4uQ/viewform? usp=sf_lin...",
+      "technique": "ETC",
+      "extra_finding": "노출 텍스트 의심 패턴 판정"
+    }
+  ]
+}

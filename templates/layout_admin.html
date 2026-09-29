@@ -1,0 +1,830 @@
+<!doctype html>
+<html lang="ko">
+<!--begin::Head-->
+
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+	<title>관리자 모드</title>
+
+	<!--begin::Theme Init (prevents flash of incorrect theme on load, #6043)-->
+	<script>
+		(() => {
+			'use strict';
+			const root = document.documentElement;
+
+			if (root.getAttribute('data-lte-color-mode') === 'off') {
+				return;
+			}
+
+			const STORAGE_KEY = 'lte-theme';
+			let stored = null;
+			try {
+				stored = localStorage.getItem(STORAGE_KEY);
+			} catch {
+			}
+			const authored = root.getAttribute('data-bs-theme');
+			let resolved = 'light';
+			if (stored === 'dark' || stored === 'light') {
+				resolved = stored;
+			} else if (authored === 'dark' || authored === 'light') {
+				resolved = authored;
+			} else if (globalThis.matchMedia('(prefers-color-scheme: dark)').matches) {
+				resolved = 'dark';
+			}
+			root.setAttribute('data-bs-theme', resolved);
+			root.style.colorScheme = resolved;
+			if (resolved !== authored) {
+				root.setAttribute('data-lte-theme-resolved', '');
+			}
+		})();
+	</script>
+	<!--end::Theme Init-->
+
+	<!--begin::Accessibility Meta Tags-->
+	<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+	<meta name="color-scheme" content="light dark" />
+	<meta name="theme-color" content="#007bff" media="(prefers-color-scheme: light)" />
+	<meta name="theme-color" content="#1a1a1a" media="(prefers-color-scheme: dark)" />
+	<!--end::Accessibility Meta Tags-->
+
+	<!--begin::Primary Meta Tags-->
+	<meta name="title" content="Admin Dashboard" />
+	<meta name="supported-color-schemes" content="light dark" />
+	<link rel="preload" href="/css/adminlte.css" as="style" />
+	<!--end::Primary Meta Tags-->
+
+	<!--begin::Fonts-->
+	<link rel="stylesheet" href="/css/index.css" />
+	<!--end::Fonts-->
+
+	<!--begin::Third Party Plugin(OverlayScrollbars)-->
+	<link rel="stylesheet" href="/css/overlayscrollbars.min.css" />
+	<!--end::Third Party Plugin(OverlayScrollbars)-->
+
+	<!--begin::Third Party Plugin(Bootstrap Icons)-->
+	<link rel="stylesheet" href="/css/bootstrap-icons.min.css" />
+	<!--end::Third Party Plugin(Bootstrap Icons)-->
+
+	<!--begin::Required Plugin(AdminLTE)-->
+	<link rel="stylesheet" href="/css/adminlte.css" />
+	<!--end::Required Plugin(AdminLTE)-->
+
+	<!--begin::Common Script-->
+	<script src="/js/jquery-3.1.1.min.js"></script>
+	<script src="/js/common.js"></script>
+	<script src="/js/util.js"></script>
+	<script src="/js/loadingoverlay.min.js"></script>
+	<script src="/js/llm-loader.js"></script>
+	<!--end::Common Script-->
+
+	<style>
+		/* GPU 모드 전용 토글 스위치 스타일 (부트스트랩 충돌 방지 및 수직 완벽 정렬) */
+		.gpu-switch-wrapper {
+			display: inline-flex;
+			align-items: center;
+			gap: 7px;
+			user-select: none;
+			vertical-align: middle;
+		}
+
+		.gpu-switch-label {
+			font-size: 0.88rem;
+			font-weight: 700;
+			margin: 0;
+			cursor: pointer;
+			letter-spacing: -0.3px;
+			line-height: 1;
+		}
+
+		.gpu-switch-wrapper {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+		}
+
+		.gpu-switch-label {
+			font-size: 0.85rem;
+			font-weight: 600;
+			user-select: none;
+			line-height: 1;
+			cursor: pointer;
+		}
+
+		.gpu-custom-toggle {
+			position: relative;
+			display: inline-block;
+			width: 44px;
+			height: 24px;
+			margin: 0;
+			cursor: pointer;
+			vertical-align: middle;
+			user-select: none;
+		}
+
+		.gpu-custom-toggle input {
+			position: absolute;
+			top: 0;
+			left: 0;
+			width: 100%;
+			height: 100%;
+			opacity: 0;
+			margin: 0;
+			padding: 0;
+			cursor: pointer;
+			z-index: 10;
+		}
+
+		.gpu-toggle-slider {
+			position: absolute;
+			top: 0;
+			left: 0;
+			right: 0;
+			bottom: 0;
+			background-color: #adb5bd;
+			transition: background-color 0.25s ease;
+			border-radius: 24px;
+			pointer-events: none;
+			z-index: 1;
+		}
+
+		.gpu-toggle-slider:before {
+			position: absolute;
+			content: "";
+			height: 18px;
+			width: 18px;
+			left: 3px;
+			bottom: 3px;
+			background-color: #ffffff;
+			transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+			border-radius: 50%;
+			box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+			will-change: transform;
+			transform: translate3d(0, 0, 0);
+		}
+
+		.gpu-custom-toggle input:checked+.gpu-toggle-slider {
+			background-color: #0d6efd;
+		}
+
+		.gpu-custom-toggle input:checked+.gpu-toggle-slider:before {
+			transform: translate3d(20px, 0, 0);
+		}
+
+		.llm-runner-stage {
+			position: relative;
+			height: 92px;
+			margin: -7px 0 8px;
+			overflow: hidden;
+			border-bottom: 1px solid var(--bs-border-color);
+			background:
+				radial-gradient(circle at 20% 85%, rgba(13, 110, 253, 0.10), transparent 42%),
+				linear-gradient(180deg, transparent 72%, rgba(100, 116, 139, 0.05));
+		}
+
+		.llm-runner-track {
+			position: absolute;
+			left: 0;
+			right: 0;
+			bottom: 7px;
+			height: 2px;
+			background: repeating-linear-gradient(90deg,
+				var(--bs-border-color) 0 9px,
+				transparent 9px 16px);
+		}
+
+		.llm-runner-pack {
+			position: absolute;
+			left: 5%;
+			bottom: 7px;
+			width: min(190px, 82%);
+			height: 82px;
+			transform: translateX(-5%);
+			transition: left 0.65s ease, transform 0.65s ease;
+			will-change: left, transform;
+		}
+
+		.llm-runner-scene {
+			display: block;
+			width: 100%;
+			height: 100%;
+			overflow: visible;
+			filter: drop-shadow(0 3px 2px rgba(15, 23, 42, 0.16));
+		}
+
+		.llm-robot-body {
+			transform-box: fill-box;
+			transform-origin: center bottom;
+			animation: llm-robot-bob 0.36s ease-in-out infinite alternate;
+		}
+
+		.llm-robot-head {
+			transform-box: fill-box;
+			transform-origin: 42% 90%;
+			animation: llm-head-look 1.1s ease-in-out infinite alternate;
+		}
+
+		.llm-robot-eye-light {
+			animation: llm-eye-blink 2.3s steps(1, end) infinite;
+		}
+
+		.llm-robot-beacon {
+			animation: llm-beacon-pulse 0.72s ease-in-out infinite alternate;
+		}
+
+		.llm-robot-arm-back,
+		.llm-robot-arm-front,
+		.llm-robot-leg-left,
+		.llm-robot-leg-right {
+			transform-box: fill-box;
+			transform-origin: center top;
+		}
+
+		.llm-robot-arm-back,
+		.llm-robot-leg-right {
+			animation: llm-limb-back 0.38s ease-in-out infinite alternate;
+		}
+
+		.llm-robot-arm-front,
+		.llm-robot-leg-left {
+			animation: llm-limb-front 0.38s ease-in-out infinite alternate;
+		}
+
+		.llm-robot-magnifier {
+			transform-box: fill-box;
+			transform-origin: left top;
+			animation: llm-magnifier-scan 0.8s ease-in-out infinite alternate;
+		}
+
+		.llm-mail-one,
+		.llm-mail-two,
+		.llm-mail-three {
+			transform-box: fill-box;
+			transform-origin: center;
+		}
+
+		.llm-mail-one {
+			animation: llm-mail-flight 0.48s ease-in-out infinite alternate;
+		}
+
+		.llm-mail-two {
+			animation: llm-mail-flight 0.55s -0.26s ease-in-out infinite alternate;
+		}
+
+		.llm-mail-three {
+			animation: llm-mail-flight 0.42s -0.12s ease-in-out infinite alternate;
+		}
+
+		.llm-mail-flap {
+			transform-box: fill-box;
+			transform-origin: center top;
+			animation: llm-flap-wave 0.34s ease-in-out infinite alternate;
+		}
+
+		.llm-speed-line {
+			stroke-dasharray: 13 10;
+			animation: llm-speed-dash 0.55s linear infinite;
+		}
+
+		.llm-dust {
+			transform-box: fill-box;
+			transform-origin: center;
+			animation: llm-dust-pop 0.75s ease-out infinite;
+		}
+
+		.llm-dust-two {
+			animation-delay: -0.38s;
+		}
+
+		.llm-load-error .llm-runner-scene * {
+			animation-play-state: paused !important;
+		}
+
+		.llm-load-error .llm-robot-shell {
+			fill: var(--bs-danger);
+		}
+
+		@keyframes llm-robot-bob {
+			from {
+				transform: translateY(0) rotate(-1deg);
+			}
+
+			to {
+				transform: translateY(-4px) rotate(1deg);
+			}
+		}
+
+		@keyframes llm-head-look {
+			from {
+				transform: rotate(-2deg);
+			}
+
+			to {
+				transform: rotate(4deg) translateY(-1px);
+			}
+		}
+
+		@keyframes llm-eye-blink {
+			0%, 46%, 52%, 100% { transform: scaleY(1); }
+			48%, 50% { transform: scaleY(0.15); }
+		}
+
+		@keyframes llm-beacon-pulse {
+			from { opacity: 0.35; transform: scale(0.82); }
+			to { opacity: 1; transform: scale(1.16); }
+		}
+
+		@keyframes llm-limb-front {
+			from { transform: rotate(22deg); }
+			to { transform: rotate(-24deg); }
+		}
+
+		@keyframes llm-limb-back {
+			from { transform: rotate(-24deg); }
+			to { transform: rotate(22deg); }
+		}
+
+		@keyframes llm-magnifier-scan {
+			from { transform: rotate(-10deg); }
+			to { transform: rotate(9deg) translateY(-2px); }
+		}
+
+		@keyframes llm-mail-flight {
+			from { transform: translateY(2px) rotate(-5deg); }
+			to { transform: translateY(-8px) rotate(5deg); }
+		}
+
+		@keyframes llm-flap-wave {
+			from { transform: rotateX(0deg); }
+			to { transform: rotateX(42deg); }
+		}
+
+		@keyframes llm-speed-dash {
+			to { stroke-dashoffset: -23; }
+		}
+
+		@keyframes llm-dust-pop {
+			0% { opacity: 0; transform: translate(5px, 0) scale(0.35); }
+			35% { opacity: 0.7; }
+			100% { opacity: 0; transform: translate(-13px, -7px) scale(1.35); }
+		}
+
+		@media (prefers-reduced-motion: reduce) {
+			.llm-runner-pack {
+				transition: none;
+			}
+
+			.llm-runner-scene * {
+				animation: none;
+			}
+		}
+	</style>
+</head>
+<!--end::Head-->
+
+<!--begin::Body-->
+
+<body class="layout-fixed sidebar-expand-lg bg-body-tertiary">
+	<!--begin::App Wrapper-->
+	<div class="app-wrapper">
+		<!--begin::Header-->
+		<nav class="app-header navbar navbar-expand bg-body">
+			<!--begin::Container-->
+			<div class="container-fluid">
+				<!--begin::Start Navbar Links-->
+				<ul class="navbar-nav align-items-center">
+					<li class="nav-item">
+						<a class="nav-link" data-lte-toggle="sidebar" href="#" role="button"
+							aria-label="Toggle sidebar">
+							<i class="bi bi-list"></i>
+						</a>
+					</li>
+					<li class="nav-item d-none d-md-block">
+						<a href="/mgr/index" class="nav-link">
+							<i class="bi bi-grid-1x2 me-1" aria-hidden="true"></i>
+							대시보드
+						</a>
+					</li>
+					<li class="nav-item ms-2 d-flex align-items-center">
+						<span id="llm-ready-badge" class="badge text-bg-success">
+							AI 모델 준비 완료, 엔진 가동 중
+						</span>
+					</li>
+					<li class="nav-item ms-3 d-flex align-items-center">
+						<div class="gpu-switch-wrapper">
+							<label class="gpu-switch-label text-body" for="gpu-mode-switch">GPU모드</label>
+							<div class="gpu-custom-toggle">
+								<input type="checkbox" id="gpu-mode-switch" <%=(typeof session !=='undefined' &&
+									session.authAdmin && session.authAdmin.row &&
+									Number(session.authAdmin.row.a_gpu)===1) ? 'checked' : '' %>>
+								<span class="gpu-toggle-slider"></span>
+							</div>
+						</div>
+					</li>
+				</ul>
+				<!--end::Start Navbar Links-->
+
+				<!--begin::Navbar Search (주석 처리)-->
+				<!--
+				<form class="navbar-search d-none d-md-block ms-3" role="search" action="/mgr/search">
+					<label for="navbar-search-input" class="visually-hidden">검색</label>
+					<div class="navbar-search-field">
+						<input type="search" id="navbar-search-input" name="q" class="form-control" placeholder="검색..."
+							autocomplete="off" />
+						<button class="navbar-search-submit" type="submit" aria-label="Submit search">
+							<i class="bi bi-search" aria-hidden="true"></i>
+						</button>
+					</div>
+				</form>
+				-->
+				<!--end::Navbar Search-->
+
+				<!--begin::End Navbar Links-->
+				<ul class="navbar-nav ms-auto">
+					<!--begin::Fullscreen Toggle-->
+					<li class="nav-item">
+						<a class="nav-link" href="#" data-lte-toggle="fullscreen" aria-label="전체화면">
+							<i data-lte-icon="maximize" class="bi bi-arrows-fullscreen"></i>
+							<i data-lte-icon="minimize" class="bi bi-fullscreen-exit d-none"></i>
+						</a>
+					</li>
+					<!--end::Fullscreen Toggle-->
+
+					<!--begin::Color Mode Toggle-->
+					<li class="nav-item dropdown">
+						<a class="nav-link" href="#" id="bd-theme" aria-label="테마 전환" data-bs-toggle="dropdown"
+							aria-expanded="false">
+							<i class="bi bi-sun-fill" data-lte-theme-icon="light"></i>
+							<i class="bi bi-moon-fill d-none" data-lte-theme-icon="dark"></i>
+							<i class="bi bi-circle-half d-none" data-lte-theme-icon="auto"></i>
+						</a>
+						<ul class="dropdown-menu dropdown-menu-end" aria-labelledby="bd-theme"
+							style="--bs-dropdown-min-width: 8rem">
+							<li>
+								<button type="button" class="dropdown-item d-flex align-items-center"
+									data-bs-theme-value="light" aria-pressed="false">
+									<i class="bi bi-sun-fill me-2"></i> Light
+									<i class="bi bi-check-lg ms-auto d-none"></i>
+								</button>
+							</li>
+							<li>
+								<button type="button" class="dropdown-item d-flex align-items-center"
+									data-bs-theme-value="dark" aria-pressed="false">
+									<i class="bi bi-moon-fill me-2"></i> Dark
+									<i class="bi bi-check-lg ms-auto d-none"></i>
+								</button>
+							</li>
+							<li>
+								<button type="button" class="dropdown-item d-flex align-items-center active"
+									data-bs-theme-value="auto" aria-pressed="true">
+									<i class="bi bi-circle-half me-2"></i> Auto
+									<i class="bi bi-check-lg ms-auto d-none"></i>
+								</button>
+							</li>
+						</ul>
+					</li>
+					<!--end::Color Mode Toggle-->
+
+					<!--begin::User Menu Dropdown-->
+					<li class="nav-item dropdown user-menu">
+						<a href="#" class="nav-link dropdown-toggle" data-bs-toggle="dropdown">
+							<i class="bi bi-person-circle fs-5 me-1"></i>
+							<span class="d-none d-md-inline">관리자</span>
+						</a>
+						<ul class="dropdown-menu dropdown-menu-lg dropdown-menu-end">
+							<li class="user-header text-bg-primary">
+								<i class="bi bi-person-circle fs-1"></i>
+								<p>관리자<small>시스템 운영자</small></p>
+							</li>
+							<li class="user-footer">
+								<a href="/mgr/logout" class="btn btn-outline-danger float-end">로그아웃</a>
+							</li>
+						</ul>
+					</li>
+					<!--end::User Menu Dropdown-->
+				</ul>
+				<!--end::End Navbar Links-->
+			</div>
+			<!--end::Container-->
+		</nav>
+		<!--end::Header-->
+
+		<!--begin::Sidebar-->
+		<aside class="app-sidebar bg-body-secondary shadow" data-bs-theme="dark">
+			<!--begin::Sidebar Brand-->
+			<!--begin::Sidebar Brand-->
+			<div class="sidebar-brand">
+				<a href="/mgr/index" class="brand-link d-flex align-items-center text-decoration-none">
+					<i class="bi bi-shield-check text-primary fs-4 me-2"></i>
+					<span class="brand-text">
+						<b class="text-body">TARAE</b>
+						<span class="text-body-secondary fw-light ms-1 fs-6">불법 광고 탐지</span>
+					</span>
+				</a>
+			</div>
+			<!--end::Sidebar Brand-->
+
+			<!--end::Sidebar Brand-->
+
+			<!--begin::Sidebar Wrapper-->
+			<div class="sidebar-wrapper">
+				<nav class="mt-2" aria-label="메인 메뉴">
+					<ul class="nav sidebar-menu flex-column" data-lte-toggle="treeview" data-accordion="false"
+						id="navigation">
+						<li class="nav-item">
+							<a href="/mgr/index" class="nav-link">
+								<i class="nav-icon bi bi-speedometer"></i>
+								<p>대시보드</p>
+							</a>
+						</li>
+						<li class="nav-item">
+							<a href="/mgr/search" class="nav-link d-flex align-items-center justify-content-between"
+								id="menu-link-detect">
+								<span class="d-flex align-items-center">
+									<i class="nav-icon bi bi-shield-check"></i>
+									<p class="mb-0">탐지 수행</p>
+								</span>
+								<span id="menu-detect-dot"
+									class="spinner-grow spinner-grow-sm text-success d-none ms-auto" role="status"
+									style="width: 0.65rem; height: 0.65rem;" title="탐지 수행 중"></span>
+							</a>
+						</li>
+						<li class="nav-item">
+							<a href="/mgr/train" class="nav-link">
+								<i class="nav-icon bi bi-funnel"></i>
+								<p>데이터 정화소</p>
+							</a>
+						</li>
+						<li class="nav-item">
+							<a href="/mgr/spam-train" class="nav-link" id="menu-link-spam-train">
+								<i class="nav-icon bi bi-cpu"></i>
+								<p>스팸 학습</p>
+							</a>
+						</li>
+						<li class="nav-item">
+							<a href="/mgr/settings" class="nav-link">
+								<i class="nav-icon bi bi-palette"></i>
+								<p>환경 설정</p>
+							</a>
+						</li>
+					</ul>
+				</nav>
+			</div>
+			<!--end::Sidebar Wrapper-->
+		</aside>
+		<!--end::Sidebar-->
+
+		<!--begin::App Main-->
+		<main class="app-main">
+			<%- body %>
+		</main>
+		<!--end::App Main-->
+
+		<!--begin::AI Model Status Floating Layer (로딩 중에만 표시)-->
+		<div id="llm-progress-container"
+			class="position-fixed bottom-0 end-0 m-3 p-3 bg-body border rounded-3 shadow-lg d-none"
+			style="z-index: 1060; width: 330px; max-width: calc(100vw - 30px); transition: opacity 0.4s ease;">
+			<div class="llm-runner-stage" aria-hidden="true">
+				<div class="llm-runner-track"></div>
+				<div id="llm-runner-pack" class="llm-runner-pack">
+					<svg class="llm-runner-scene" viewBox="0 0 190 86" role="presentation">
+						<defs>
+							<linearGradient id="llm-robot-blue" x1="0" y1="0" x2="1" y2="1">
+								<stop offset="0" stop-color="#48b4ff" />
+								<stop offset="0.55" stop-color="#087cf0" />
+								<stop offset="1" stop-color="#0753b7" />
+							</linearGradient>
+							<linearGradient id="llm-mail-gold" x1="0" y1="0" x2="0" y2="1">
+								<stop offset="0" stop-color="#ffe082" />
+								<stop offset="1" stop-color="#f59e0b" />
+							</linearGradient>
+						</defs>
+						<g fill="none" stroke="#78b9ff" stroke-width="2" stroke-linecap="round" opacity="0.65">
+							<path class="llm-speed-line" d="M86 27h31" />
+							<path class="llm-speed-line" d="M91 36h22" />
+							<path class="llm-speed-line" d="M83 47h29" />
+						</g>
+						<ellipse cx="42" cy="79" rx="27" ry="4" fill="#0f172a" opacity="0.16" />
+						<circle class="llm-dust" cx="17" cy="72" r="3" fill="#94a3b8" opacity="0" />
+						<circle class="llm-dust llm-dust-two" cx="25" cy="76" r="2.4" fill="#94a3b8" opacity="0" />
+						<g class="llm-robot-body">
+							<g class="llm-robot-arm-back" fill="none" stroke="#0753b7" stroke-width="7" stroke-linecap="round"><path d="M27 45c-12 4-14 13-7 20" /></g>
+							<g class="llm-robot-leg-right" fill="none" stroke="#1e3a8a" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"><path d="M46 64l11 10 10-2" /></g>
+							<g class="llm-robot-leg-left" fill="none" stroke="#087cf0" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"><path d="M35 64L25 75l-10-1" /></g>
+							<rect class="llm-robot-shell" x="22" y="36" width="43" height="31" rx="12" fill="url(#llm-robot-blue)" />
+							<rect x="31" y="44" width="25" height="14" rx="5" fill="#e6f5ff" opacity="0.92" />
+							<circle cx="38" cy="51" r="2.2" fill="#22c55e" /><rect x="43" y="49" width="8" height="3" rx="1.5" fill="#60a5fa" />
+							<g class="llm-robot-head">
+								<path d="M34 13l3-7h12l4 7" fill="#334155" /><rect x="28" y="10" width="31" height="5" rx="2.5" fill="#334155" />
+								<rect x="18" y="14" width="49" height="31" rx="11" fill="url(#llm-robot-blue)" /><rect x="24" y="20" width="37" height="19" rx="8" fill="#eaf7ff" />
+								<g class="llm-robot-eye-light" fill="#0753b7"><circle cx="35" cy="29" r="3.3" /><circle cx="50" cy="29" r="3.3" /></g>
+								<path d="M37 36c4 2 8 2 12 0" fill="none" stroke="#0753b7" stroke-width="2" stroke-linecap="round" /><circle class="llm-robot-beacon" cx="43" cy="6" r="3.5" fill="#ef4444" />
+							</g>
+							<g class="llm-robot-arm-front" fill="none" stroke="#087cf0" stroke-width="7" stroke-linecap="round"><path d="M61 44c11 1 14 8 18 13" /></g>
+							<g class="llm-robot-magnifier" fill="none" stroke="#334155" stroke-linecap="round"><circle cx="83" cy="58" r="8" stroke-width="4" fill="#dff3ff" fill-opacity="0.65" /><path d="M77 64l-8 8" stroke-width="5" /><path d="M79 54c2-2 5-2 7 0" stroke="#ffffff" stroke-width="1.7" opacity="0.9" /></g>
+						</g>
+						<g class="llm-mail-one"><rect x="106" y="27" width="29" height="21" rx="4" fill="url(#llm-mail-gold)" stroke="#d97706" stroke-width="1.5" /><path class="llm-mail-flap" d="M108 30l12.5 10L133 30" fill="#ffecb5" stroke="#d97706" stroke-width="1.5" stroke-linejoin="round" /><circle cx="130" cy="44" r="5" fill="#ef4444" /><path d="M128 42l4 4m0-4l-4 4" stroke="#fff" stroke-width="1.5" stroke-linecap="round" /></g>
+						<g class="llm-mail-two"><rect x="139" y="18" width="23" height="17" rx="3" fill="url(#llm-mail-gold)" stroke="#d97706" stroke-width="1.4" /><path class="llm-mail-flap" d="M141 20l9.5 8 9.5-8" fill="#fff0bd" stroke="#d97706" stroke-width="1.3" /></g>
+						<g class="llm-mail-three"><rect x="164" y="39" width="19" height="14" rx="3" fill="url(#llm-mail-gold)" stroke="#d97706" stroke-width="1.3" /><path class="llm-mail-flap" d="M166 41l7.5 6 7.5-6" fill="#fff0bd" stroke="#d97706" stroke-width="1.2" /></g>
+					</svg>
+				</div>
+			</div>
+			<div class="d-flex align-items-center justify-content-between mb-2">
+				<div class="d-flex align-items-center gap-2 overflow-hidden">
+					<i class="bi bi-cpu-fill text-primary fs-5"></i>
+					<span id="llm-status-text" class="small fw-semibold text-truncate">AI 모델 로딩 중...</span>
+				</div>
+				<small id="llm-progress-percent" class="fw-bold text-primary ms-2">0%</small>
+			</div>
+			<div class="progress" style="height: 6px;">
+				<div id="llm-progress-bar" class="progress-bar progress-bar-striped progress-bar-animated bg-primary"
+					role="progressbar" style="width: 5%"></div>
+			</div>
+		</div>
+		<!--end::AI Model Status Floating Layer-->
+
+		<!--begin::Spam Train Status Floating Layer (백그라운드 스팸 학습 중에만 표시)-->
+		<div id="spam-progress-container"
+			class="position-fixed bottom-0 end-0 m-3 p-3 bg-body border rounded-3 shadow-lg d-none"
+			style="z-index: 1065; width: 330px; max-width: calc(100vw - 30px); transition: opacity 0.4s ease;">
+			<div class="d-flex align-items-center justify-content-between mb-2">
+				<div class="d-flex align-items-center gap-2 overflow-hidden">
+					<i class="bi bi-cloud-arrow-up-fill text-success fs-5"></i>
+					<span id="spam-status-text" class="small fw-semibold text-truncate">스팸 학습 중...</span>
+				</div>
+				<small id="spam-progress-percent" class="fw-bold text-success ms-2">0%</small>
+			</div>
+			<div class="progress" style="height: 6px;">
+				<div id="spam-progress-bar" class="progress-bar progress-bar-striped progress-bar-animated bg-success"
+					role="progressbar" style="width: 0%"></div>
+			</div>
+			<div class="d-flex justify-content-between text-muted mt-2" style="font-size: 0.75rem;">
+				<span id="spam-progress-counts">0 / 0건</span>
+				<span id="spam-progress-sub">백그라운드 처리 중</span>
+			</div>
+		</div>
+		<!--end::Spam Train Status Floating Layer-->
+
+		<!--begin::Footer-->
+		<footer class="app-footer">
+			<div class="float-end d-none d-sm-inline">불법광고 탐지 시스템</div>
+			<strong>Powered by 온디바이스 AI | 탐색 시간과 횟수에 관계없이 비용이 발생하지 않습니다.</strong>
+		</footer>
+		<!--end::Footer-->
+	</div>
+	<!--end::App Wrapper-->
+
+	<!--begin::Script-->
+	<!--begin::Third Party Plugin(OverlayScrollbars)-->
+	<script src="/js/overlayscrollbars.browser.es6.min.js"></script>
+	<!--end::Third Party Plugin(OverlayScrollbars)-->
+	<!--begin::Required Plugin(popperjs for Bootstrap 5)-->
+	<script src="/js/popper.min.js"></script>
+	<!--end::Required Plugin(popperjs for Bootstrap 5)-->
+	<!--begin::Required Plugin(Bootstrap 5)-->
+	<script src="/js/bootstrap.min.js"></script>
+	<!--end::Required Plugin(Bootstrap 5)-->
+	<!--begin::Required Plugin(AdminLTE)-->
+	<script src="/js/adminlte.js"></script>
+	<!--end::Required Plugin(AdminLTE)-->
+
+	<!--begin::OverlayScrollbars Configure-->
+	<script>
+		const SELECTOR_SIDEBAR_WRAPPER = '.sidebar-wrapper';
+		const Default = {
+			scrollbarTheme: 'os-theme-light',
+			scrollbarAutoHide: 'leave',
+			scrollbarClickScroll: true,
+		};
+		document.addEventListener('DOMContentLoaded', function () {
+			const sidebarWrapper = document.querySelector(SELECTOR_SIDEBAR_WRAPPER);
+			const isMobile = window.innerWidth <= 992;
+			if (sidebarWrapper && OverlayScrollbarsGlobal?.OverlayScrollbars !== undefined && !isMobile) {
+				OverlayScrollbarsGlobal.OverlayScrollbars(sidebarWrapper, {
+					scrollbars: {
+						theme: Default.scrollbarTheme,
+						autoHide: Default.scrollbarAutoHide,
+						clickScroll: Default.scrollbarClickScroll,
+					},
+				});
+			}
+		});
+	</script>
+	<!--end::OverlayScrollbars Configure-->
+
+	<!--begin::Charts follow the colour mode-->
+	<script>
+		(() => {
+			'use strict';
+			const mode = () => document.documentElement.getAttribute('data-bs-theme') === 'dark' ? 'dark' : 'light';
+			globalThis.Apex ||= {};
+			const apex = globalThis.Apex;
+			apex.theme = { mode: mode() };
+			apex.chart = Object.assign(apex.chart || {}, { background: 'transparent' });
+			new MutationObserver(() => {
+				const next = mode();
+				apex.theme = { mode: next };
+				const instances = apex._chartInstances || [];
+				for (const { chart } of instances) {
+					chart.updateOptions({ theme: { mode: next } }, false, false);
+				}
+			}).observe(document.documentElement, {
+				attributes: true,
+				attributeFilter: ['data-bs-theme'],
+			});
+		})();
+	</script>
+	<!--end::Charts follow the colour mode-->
+
+	<!--begin::탐지 수행 백그라운드 상태 녹색 dot 모니터링-->
+	<script>
+		(() => {
+			const dot = document.getElementById('menu-detect-dot');
+			if (!dot) return;
+
+			async function updateDetectMenuStatus() {
+				try {
+					const res = await fetch('/mgr/api/detect/status');
+					const json = await res.json();
+					if (json && json.data) {
+						if (json.data.status === 'RUNNING') {
+							dot.classList.remove('d-none');
+							dot.classList.add('d-inline-block');
+						} else {
+							dot.classList.remove('d-inline-block');
+							dot.classList.add('d-none');
+						}
+					}
+				} catch (e) { }
+			}
+
+			updateDetectMenuStatus();
+			setInterval(updateDetectMenuStatus, 2000);
+		})();
+	</script>
+	<!--end::탐지 수행 백그라운드 상태 녹색 dot 모니터링-->
+	<script src="/js/spam-train-loader.js"></script>
+
+	<!--begin::GPU 모드 토글 연동 스크립트-->
+	<script>
+		(() => {
+			const gpuSwitch = document.getElementById('gpu-mode-switch');
+			if (!gpuSwitch) return;
+
+			let isUpdating = false;
+
+			// 초기 서버/세션의 a_gpu 상태 동기화 (불필요한 애니메이션/움찔 방지)
+			async function initGpuSwitchState() {
+				try {
+					const res = await fetch('/mgr/api/ai/gpu-mode');
+					const data = await res.json();
+					if (data && data.success === 'Y') {
+						const shouldCheck = (Number(data.a_gpu) === 1);
+						if (gpuSwitch.checked !== shouldCheck) {
+							gpuSwitch.checked = shouldCheck;
+						}
+					}
+				} catch (e) {
+					console.warn('GPU 상태 조회 실패:', e);
+				}
+			}
+
+			// 토글 스위치 변경 시 비동기 반영 및 동기화
+			gpuSwitch.addEventListener('change', async function () {
+				if (isUpdating) return;
+				isUpdating = true;
+
+				const isChecked = this.checked;
+				const a_gpu = isChecked ? 1 : 0;
+
+				try {
+					const res = await fetch('/mgr/api/ai/gpu-mode', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ a_gpu: a_gpu })
+					});
+					const result = await res.json();
+					if (result && result.success === 'Y') {
+						// 성공 처리
+					} else {
+						// 실패 시 원복
+						gpuSwitch.checked = !isChecked;
+						alert(result.msg || 'GPU 모드 전환 중 오류가 발생했습니다.');
+					}
+				} catch (err) {
+					gpuSwitch.checked = !isChecked;
+					console.error('GPU 모드 전환 네트워크 오류:', err);
+					alert(err && err.message ? ('통신 오류: ' + err.message) : '서버와 통신 중 오류가 발생했습니다.');
+				} finally {
+					isUpdating = false;
+				}
+			});
+
+			initGpuSwitchState();
+		})();
+	</script>
+	<!--end::GPU 모드 토글 연동 스크립트-->
+	<!--end::Script-->
+</body>
+<!--end::Body-->
+
+</html>

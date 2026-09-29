@@ -1,0 +1,810 @@
+<div class="app-content-header">
+  <div class="container-fluid">
+    <div class="row">
+      <div class="col-sm-6">
+        <h1 class="mb-0 fs-3">대시보드</h1>
+      </div>
+      <div class="col-sm-6">
+        <nav aria-label="breadcrumb">
+          <ol class="breadcrumb float-sm-end">
+            <li class="breadcrumb-item"><a href="/mgr/index">홈</a></li>
+            <li class="breadcrumb-item active" aria-current="page">대시보드</li>
+          </ol>
+        </nav>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="app-content">
+  <div class="container-fluid">
+    <!-- 요약 통계 카드 영역 (DB 실시간 연동) -->
+    <div class="row g-3 mb-3">
+      <!-- 1. 점검 수행 사이트 -->
+      <div class="col-md-3 col-6">
+        <div class="card h-100 shadow-sm border-0">
+          <div class="card-body">
+            <p class="text-secondary small mb-1">점검 수행 사이트</p>
+            <% const curSites = (typeof summary !== 'undefined' && summary) ? summary.total_sites : 0; %>
+            <% const curPages = (typeof summary !== 'undefined' && summary) ? summary.total_pages : 0; %>
+            <h3 class="mb-0 fw-bold"><%= curSites %> <span class="fs-6 fw-normal text-secondary">개 사이트</span></h3>
+            <small class="text-muted">하위 페이지 총 <%= curPages %>개 탐색</small>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. 불법광고 검출 건수 -->
+      <div class="col-md-3 col-6">
+        <div class="card h-100 shadow-sm border-0">
+          <div class="card-body">
+            <p class="text-secondary small mb-1">불법광고 검출 건수</p>
+            <% const curViolations = (typeof summary !== 'undefined' && summary) ? summary.total_violations : 0; %>
+            <h3 class="mb-0 fw-bold <%= curViolations > 0 ? 'text-danger' : 'text-success' %>">
+              <%= curViolations %> <span class="fs-6 fw-normal text-secondary">건 적발</span>
+            </h3>
+            <%
+              let catItems = [];
+              if (typeof categoryStats !== 'undefined' && categoryStats) {
+                if (categoryStats.gambling_cnt > 0) catItems.push('도박 ' + categoryStats.gambling_cnt + '건');
+                if (categoryStats.adult_cnt > 0) catItems.push('성인 ' + categoryStats.adult_cnt + '건');
+                if (categoryStats.loan_cnt > 0) catItems.push('불법대출 ' + categoryStats.loan_cnt + '건');
+                const etcCat = categoryStats.total_cnt - (categoryStats.gambling_cnt + categoryStats.adult_cnt + categoryStats.loan_cnt);
+                if (etcCat > 0) catItems.push('기타 ' + etcCat + '건');
+              }
+            %>
+            <% if (catItems.length > 0) { %>
+              <small class="text-danger"><%= catItems.join(', ') %></small>
+            <% } else if (curViolations > 0) { %>
+              <small class="text-danger">총 <%= curViolations %>건 위반 확인</small>
+            <% } else { %>
+              <small class="text-muted">적발된 불법광고 없음</small>
+            <% } %>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. 4대 필수 은닉 기법 탐지 -->
+      <div class="col-md-3 col-6">
+        <div class="card h-100 shadow-sm border-0">
+          <div class="card-body">
+            <p class="text-secondary small mb-1">4대 필수 은닉 기법 탐지</p>
+            <% 
+              const safeTech = (typeof techStats !== 'undefined' && techStats) ? techStats : { JAMO: 0, HOMOGLYPH: 0, TRANSPARENT: 0, OFFSCREEN: 0, ETC: 0 };
+              const total4Tech = (safeTech.JAMO || 0) + (safeTech.HOMOGLYPH || 0) + (safeTech.TRANSPARENT || 0) + (safeTech.OFFSCREEN || 0);
+            %>
+            <h3 class="mb-0 fw-bold <%= total4Tech > 0 ? 'text-warning' : 'text-secondary' %>">
+              <%= total4Tech %> <span class="fs-6 fw-normal text-secondary">건 분류</span>
+            </h3>
+            <small class="text-warning">자모(<%= safeTech.JAMO || 0 %>)·닮은꼴(<%= safeTech.HOMOGLYPH || 0 %>)·투명(<%= safeTech.TRANSPARENT || 0 %>)·화면밖(<%= safeTech.OFFSCREEN || 0 %>)<%= (safeTech.ETC && safeTech.ETC > 0) ? '·기타(' + safeTech.ETC + ')' : '' %></small>
+          </div>
+        </div>
+      </div>
+
+      <!-- 4. AI 평가 정확도 (현재까지 유사도 평가 % 평균) -->
+      <div class="col-md-3 col-6">
+        <div class="card h-100 shadow-sm border-0">
+          <div class="card-body">
+            <p class="text-secondary small mb-1">AI 평가 정확도</p>
+            <% 
+              const aiTotal = (typeof aiAccuracy !== 'undefined' && aiAccuracy) ? aiAccuracy.total_cnt : 0;
+              const aiScoreValue = (aiTotal > 0 && aiAccuracy) ? Number(aiAccuracy.avg_sim_score || 0) : 0;
+              const aiScore = aiScoreValue.toFixed(1);
+            %>
+            <h3 class="mb-0 fw-bold text-success"><%= aiScore %>% <span class="fs-6 fw-normal text-secondary">평균 일치</span></h3>
+            <small class="text-success">현재까지 유사도 평가 % 평균 (총 <%= aiTotal %>건 분석)</small>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 탐지 프로젝트(사이트) 목록 툴바 및 테이블 -->
+    <div class="card shadow-sm border-0">
+      <div class="card-header">
+        <form method="GET" action="/mgr/index" class="d-flex flex-wrap gap-2 align-items-center w-100">
+          <h3 class="card-title mb-0 me-auto">점검 대상 웹사이트 목록</h3>
+          
+          <div class="input-group input-group-sm" style="width: 16rem">
+            <span class="input-group-text">
+              <i class="bi bi-search" aria-hidden="true"></i>
+            </span>
+            <input
+              type="search"
+              name="keyword"
+              class="form-control"
+              placeholder="URL 또는 사이트명 검색..."
+              value="<%= typeof keyword !== 'undefined' ? keyword : '' %>"
+              aria-label="Search projects"
+            />
+          </div>
+
+          <select
+            name="statusFilter"
+            class="form-select form-select-sm"
+            style="width: 10rem"
+            aria-label="Filter by status"
+          >
+            <option value="" <%= (typeof statusFilter === 'undefined' || !statusFilter) ? 'selected' : '' %>>모든 탐지 상태</option>
+            <option value="RUNNING" <%= (typeof statusFilter !== 'undefined' && statusFilter === 'RUNNING') ? 'selected' : '' %>>탐지 수행 중 (LIVE)</option>
+            <option value="COMPLETED" <%= (typeof statusFilter !== 'undefined' && statusFilter === 'COMPLETED') ? 'selected' : '' %>>점검 완료</option>
+            <option value="STOPPED" <%= (typeof statusFilter !== 'undefined' && statusFilter === 'STOPPED') ? 'selected' : '' %>>점검 중지</option>
+          </select>
+
+          <button class="btn btn-primary btn-sm" type="submit">
+            <i class="bi bi-search me-1" aria-hidden="true"></i>
+            검색
+          </button>
+          
+          <% if ((typeof keyword !== 'undefined' && keyword) || (typeof statusFilter !== 'undefined' && statusFilter)) { %>
+            <a href="/mgr/index" class="btn btn-outline-secondary btn-sm" title="검색 조건 초기화">
+              <i class="bi bi-arrow-counterclockwise"></i>
+            </a>
+          <% } %>
+        </form>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table align-middle mb-0">
+            <thead>
+              <tr>
+                <th style="min-width: 240px; max-width: 360px; width: 28%;">점검 대상 사이트 (진입 URL)</th>
+                <th>탐지 상태</th>
+                <th>검출 은닉 기법 (4대 유형)</th>
+                <th>검출 건수 (소요 시간)</th>
+                <th>최종 점검 일시</th>
+                <th>위험 등급</th>
+                <th class="text-end">보고서 / 결과 파일</th>
+              </tr>
+            </thead>
+            <tbody>
+              <!-- DB 실제 점검 이력 목록 (클릭 시 최종 점검 완료 화면으로 완벽 복원) -->
+              <% if (typeof masterList !== 'undefined' && masterList && masterList.length > 0) { %>
+                <% masterList.forEach(function(item) { %>
+                  <% const isLive = item.status === 'RUNNING'; %>
+                  <tr style="cursor: pointer;" onclick="location.href='/mgr/search?id=<%= item.id %>'" title="클릭 시 해당 점검 화면으로 이동합니다.">
+                    <td style="max-width: 360px; overflow: hidden;">
+                      <a href="/mgr/search?id=<%= item.id %>" class="fw-semibold text-decoration-none text-primary d-block text-truncate" style="max-width: 100%;" title="<%= item.title ? item.title : item.entry_url %>">
+                        <%= item.title ? item.title : item.entry_url %>
+                      </a>
+                      <div class="small text-secondary font-monospace d-flex align-items-center overflow-hidden" style="max-width: 100%;">
+                        <span class="text-truncate flex-grow-1 flex-shrink-1" style="max-width: 200px;" title="<%= item.entry_url %>"><%= item.entry_url %></span>
+                        <span class="flex-shrink-0 ms-1">&middot; #<%= item.id %></span>
+                        <% if (isLive) { %>
+                          <span class="flex-shrink-0 ms-1 text-success fw-bold">&middot; LIVE</span>
+                        <% } else if (item.status === 'STOPPED') { %>
+                          <span class="flex-shrink-0 ms-1 text-warning">&middot; 중지</span>
+                        <% } else { %>
+                          <span class="flex-shrink-0 ms-1">&middot; 완료</span>
+                        <% } %>
+                      </div>
+                    </td>
+                    <td>
+                      <% if (isLive) { %>
+                        <span class="badge text-bg-success">
+                          <span class="spinner-grow spinner-grow-sm me-1" style="width: 0.55rem; height: 0.55rem;" role="status"></span>
+                          탐지 수행 중 (LIVE)
+                        </span>
+                      <% } else if (item.status === 'STOPPED') { %>
+                        <span class="badge text-bg-warning">점검 중지 (<%= item.violation_count || 0 %>건)</span>
+                      <% } else if (item.violation_count > 0) { %>
+                        <span class="badge text-bg-danger">위반 <%= item.violation_count %>건 검출</span>
+                      <% } else { %>
+                        <span class="badge text-bg-success">정상 (0건)</span>
+                      <% } %>
+                    </td>
+
+                    <td>
+                      <div class="d-inline-flex gap-1 flex-wrap">
+                        <span class="badge text-bg-primary-subtle text-primary border border-primary-subtle">표준 4종+</span>
+                        <% if (item.total_pages) { %>
+                          <span class="badge text-bg-light border"><%= item.total_pages %>개 페이지</span>
+                        <% } %>
+                      </div>
+                    </td>
+                    <td class="text-nowrap">
+                      <span class="fw-bold <%= item.violation_count > 0 ? 'text-danger' : 'text-success' %>"><%= item.violation_count || 0 %>건</span>
+                      <div class="small text-secondary">(소요: <%= item.elapsed_sec || 0 %>초)</div>
+                    </td>
+                    <td class="text-nowrap text-secondary">
+                      <%= item.started_at ? item.started_at.substring(0, 16).replace('T', ' ') : '-' %>
+                    </td>
+                    <td>
+                      <% if (isLive) { %>
+                        <span class="badge text-bg-info">진행 중</span>
+                      <% } else if (item.violation_count >= 3) { %>
+                        <span class="badge text-bg-danger">긴급</span>
+                      <% } else if (item.violation_count > 0) { %>
+                        <span class="badge text-bg-warning">주의</span>
+                      <% } else { %>
+                        <span class="badge text-bg-success">안전</span>
+                      <% } %>
+                    </td>
+                    <td class="text-end" onclick="event.stopPropagation();">
+                      <div class="btn-group btn-group-sm">
+                        <button class="btn btn-outline-secondary" type="button" title="탐지 상세 내역 보기" onclick="location.href='/mgr/search?id=<%= item.id %>'">
+                          <i class="bi bi-eye" aria-hidden="true"></i>
+                        </button>
+                        <button class="btn btn-outline-secondary" type="button" title="점검 결과 파일 확인" onclick="openResultJsonModal(<%= item.id %>)">
+                          <i class="bi bi-file-earmark-code" aria-hidden="true"></i>
+                        </button>
+                        <% if (isLive) { %>
+                          <button class="btn btn-outline-secondary opacity-50" type="button" title="현재 탐지 수행 중(LIVE)인 사이트는 재탐지할 수 없습니다." onclick="alert('현재 탐지 수행 중(LIVE)인 사이트입니다.'); return false;">
+                            <i class="bi bi-arrow-clockwise" aria-hidden="true"></i>
+                          </button>
+                        <% } else { %>
+                          <button class="btn btn-outline-secondary" type="button" title="재탐지" onclick="reDetectSite('<%= item.entry_url %>', '<%= (item.title || "").replace(/\'/g, "\\\'") %>')">
+                            <i class="bi bi-arrow-clockwise" aria-hidden="true"></i>
+                          </button>
+                        <% } %>
+                      </div>
+                    </td>
+                  </tr>
+                <% }); %>
+              <% } else { %>
+                <tr>
+                  <td colspan="7" class="text-center py-5 text-secondary">
+                    <i class="bi bi-inbox fs-2 d-block mb-2 text-muted"></i>
+                    <% if ((typeof keyword !== 'undefined' && keyword) || (typeof statusFilter !== 'undefined' && statusFilter)) { %>
+                      검색 조건과 일치하는 점검 결과가 없습니다.
+                    <% } else { %>
+                      등록된 웹사이트 점검 이력이 없습니다. 상단 메뉴의 [탐지 수행]에서 점검을 시작해 주세요.
+                    <% } %>
+                  </td>
+                </tr>
+              <% } %>
+
+              <!-- [참고용 UI 컴포넌트 및 아이콘 샘플 아카이브 - 추후 활용을 위해 안전하게 보존]
+              [1번 사이트 (복합 은닉 4건 검출)]
+              <tr>
+                <td>
+                  <a href="#" class="fw-semibold text-decoration-none">
+                    행정안전부 참여알림 게시판
+                  </a>
+                  <div class="small text-secondary font-monospace">https://www.example.go.kr/board/list</div>
+                </td>
+                <td>
+                  <span class="badge text-bg-danger">위반 4건 검출</span>
+                </td>
+                <td style="min-width: 8rem">
+                  <div class="d-flex align-items-center gap-2">
+                    <div class="progress flex-grow-1" style="height: 6px">
+                      <div
+                        class="progress-bar bg-danger"
+                        role="progressbar"
+                        style="width: 85%"
+                        aria-valuenow="85"
+                        aria-valuemin="0"
+                        aria-valuemax="100"
+                      ></div>
+                    </div>
+                    <small class="text-danger fw-bold" style="min-width: 2.25rem"> 85% </small>
+                  </div>
+                </td>
+                <td>
+                  <div class="d-inline-flex gap-1 flex-wrap">
+                    <span class="badge text-bg-danger-subtle text-danger border border-danger-subtle" title="자모 분해 우회">JAMO (1)</span>
+                    <span class="badge text-bg-danger-subtle text-danger border border-danger-subtle" title="닮은꼴 글자 위장">HOMO (1)</span>
+                    <span class="badge text-bg-warning-subtle text-warning border border-warning-subtle" title="투명 텍스트">TRANS (1)</span>
+                    <span class="badge text-bg-warning-subtle text-warning border border-warning-subtle" title="화면 밖 은닉(iframe)">OFF (1)</span>
+                  </div>
+                </td>
+                <td class="text-nowrap">
+                  <span class="fw-bold text-danger">4건</span>
+                  <div class="small text-secondary">(소요: 184초)</div>
+                </td>
+                <td class="text-nowrap text-secondary">2026-10-24 10:08</td>
+                <td>
+                  <span class="badge text-bg-danger"> 긴급 </span>
+                </td>
+                <td class="text-end" onclick="event.stopPropagation();">
+                  <div class="btn-group btn-group-sm">
+                    <button class="btn btn-outline-secondary" type="button" title="탐지 상세 내역 보기" onclick="location.href='/mgr/search?url=' + encodeURIComponent('https://www.example.go.kr/board/list')">
+                      <i class="bi bi-eye" aria-hidden="true"></i>
+                    </button>
+                    <button class="btn btn-outline-secondary" type="button" title="result.json 스키마 확인" onclick="openResultJsonModal()">
+                      <i class="bi bi-file-earmark-code" aria-hidden="true"></i>
+                    </button>
+                    <button class="btn btn-outline-secondary" type="button" title="재탐지" onclick="reDetectSite('https://www.example.go.kr/board/list', '행정안전부 참여알림 게시판')">
+                      <i class="bi bi-arrow-clockwise" aria-hidden="true"></i>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+
+              [2번 사이트 (키릴 위장 2건)]
+              <tr>
+                <td>
+                  <a href="#" class="fw-semibold text-decoration-none">
+                    한국환경공단 열린알림마당
+                  </a>
+                  <div class="small text-secondary font-monospace">https://www.keco.or.kr/board/notice</div>
+                </td>
+                <td>
+                  <span class="badge text-bg-warning">주의 2건 검출</span>
+                </td>
+                <td style="min-width: 8rem">
+                  <div class="d-flex align-items-center gap-2">
+                    <div class="progress flex-grow-1" style="height: 6px">
+                      <div
+                        class="progress-bar bg-warning"
+                        role="progressbar"
+                        style="width: 45%"
+                        aria-valuenow="45"
+                        aria-valuemin="0"
+                        aria-valuemax="100"
+                      ></div>
+                    </div>
+                    <small class="text-warning fw-bold" style="min-width: 2.25rem"> 45% </small>
+                  </div>
+                </td>
+                <td>
+                  <div class="d-inline-flex gap-1 flex-wrap">
+                    <span class="badge text-bg-danger-subtle text-danger border border-danger-subtle" title="키릴 전각 문자 위장">HOMO (1)</span>
+                    <span class="badge text-bg-info-subtle text-info border border-info-subtle" title="추가 탐지 유형: 난독화 링크">ETC (1)</span>
+                  </div>
+                </td>
+                <td class="text-nowrap">
+                  <span class="fw-bold text-warning">2건</span>
+                  <div class="small text-secondary">(소요: 95초)</div>
+                </td>
+                <td class="text-nowrap text-secondary">2026-10-24 09:40</td>
+                <td>
+                  <span class="badge text-bg-warning"> 주의 </span>
+                </td>
+                <td class="text-end" onclick="event.stopPropagation();">
+                  <div class="btn-group btn-group-sm">
+                    <button class="btn btn-outline-secondary" type="button" title="탐지 상세 내역 보기" onclick="location.href='/mgr/search?url=' + encodeURIComponent('https://www.keco.or.kr/board/notice')">
+                      <i class="bi bi-eye" aria-hidden="true"></i>
+                    </button>
+                    <button class="btn btn-outline-secondary" type="button" title="result.json 다운로드" onclick="openResultJsonModal()">
+                      <i class="bi bi-file-earmark-code" aria-hidden="true"></i>
+                    </button>
+                    <button class="btn btn-outline-secondary" type="button" title="재탐지" onclick="reDetectSite('https://www.keco.or.kr/board/notice', '한국환경공단 열린알림마당')">
+                      <i class="bi bi-arrow-clockwise" aria-hidden="true"></i>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+
+              [3번 사이트 (자모분해 및 화면밖 은닉 3건)]
+              <tr>
+                <td>
+                  <a href="#" class="fw-semibold text-decoration-none">
+                    한국지능정보사회진흥원 대국민소통관
+                  </a>
+                  <div class="small text-secondary font-monospace">https://www.nia.or.kr/qna/list</div>
+                </td>
+                <td>
+                  <span class="badge text-bg-danger">위반 3건 검출</span>
+                </td>
+                <td style="min-width: 8rem">
+                  <div class="d-flex align-items-center gap-2">
+                    <div class="progress flex-grow-1" style="height: 6px">
+                      <div
+                        class="progress-bar bg-danger"
+                        role="progressbar"
+                        style="width: 65%"
+                        aria-valuenow="65"
+                        aria-valuemin="0"
+                        aria-valuemax="100"
+                      ></div>
+                    </div>
+                    <small class="text-danger fw-bold" style="min-width: 2.25rem"> 65% </small>
+                  </div>
+                </td>
+                <td>
+                  <div class="d-inline-flex gap-1 flex-wrap">
+                    <span class="badge text-bg-danger-subtle text-danger border border-danger-subtle" title="자모 분해 우회">JAMO (2)</span>
+                    <span class="badge text-bg-warning-subtle text-warning border border-warning-subtle" title="음수 좌표 화면 밖 은닉">OFF (1)</span>
+                  </div>
+                </td>
+                <td class="text-nowrap">
+                  <span class="fw-bold text-danger">3건</span>
+                  <div class="small text-secondary">(소요: 210초)</div>
+                </td>
+                <td class="text-nowrap text-secondary">2026-10-24 09:12</td>
+                <td>
+                  <span class="badge text-bg-danger"> 긴급 </span>
+                </td>
+                <td class="text-end" onclick="event.stopPropagation();">
+                  <div class="btn-group btn-group-sm">
+                    <button class="btn btn-outline-secondary" type="button" title="탐지 상세 내역 보기" onclick="location.href='/mgr/search?url=' + encodeURIComponent('https://www.nia.or.kr/qna/list')">
+                      <i class="bi bi-eye" aria-hidden="true"></i>
+                    </button>
+                    <button class="btn btn-outline-secondary" type="button" title="result.json 다운로드" onclick="openResultJsonModal()">
+                      <i class="bi bi-file-earmark-code" aria-hidden="true"></i>
+                    </button>
+                    <button class="btn btn-outline-secondary" type="button" title="재탐지" onclick="reDetectSite('https://www.nia.or.kr/qna/list', '한국지능정보사회진흥원 대국민소통관')">
+                      <i class="bi bi-arrow-clockwise" aria-hidden="true"></i>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+
+              [4번 사이트 (정상 안전)]
+              <tr>
+                <td>
+                  <a href="#" class="fw-semibold text-decoration-none">
+                    문화체육관광부 소통마당
+                  </a>
+                  <div class="small text-secondary font-monospace">https://www.mcst.go.kr/press/list</div>
+                </td>
+                <td>
+                  <span class="badge text-bg-success">정상 (안전)</span>
+                </td>
+                <td style="min-width: 8rem">
+                  <div class="d-flex align-items-center gap-2">
+                    <div class="progress flex-grow-1" style="height: 6px">
+                      <div
+                        class="progress-bar bg-success"
+                        role="progressbar"
+                        style="width: 0%"
+                        aria-valuenow="0"
+                        aria-valuemin="0"
+                        aria-valuemax="100"
+                      ></div>
+                    </div>
+                    <small class="text-success fw-bold" style="min-width: 2.25rem"> 0% </small>
+                  </div>
+                </td>
+                <td>
+                  <span class="badge text-bg-light text-secondary border">미검출 (0)</span>
+                </td>
+                <td class="text-nowrap">
+                  <span class="fw-bold text-success">0건</span>
+                  <div class="small text-secondary">(소요: 62초)</div>
+                </td>
+                <td class="text-nowrap text-secondary">2026-10-23 18:20</td>
+                <td>
+                  <span class="badge text-bg-success"> 정상 </span>
+                </td>
+                <td class="text-end" onclick="event.stopPropagation();">
+                  <div class="btn-group btn-group-sm">
+                    <button class="btn btn-outline-secondary" type="button" title="탐지 상세 내역 보기" onclick="location.href='/mgr/search?url=' + encodeURIComponent('https://www.mcst.go.kr/press/list')">
+                      <i class="bi bi-eye" aria-hidden="true"></i>
+                    </button>
+                    <button class="btn btn-outline-secondary" type="button" title="result.json 확인 (findings: [])" onclick="openResultJsonModal()">
+                      <i class="bi bi-file-earmark-code" aria-hidden="true"></i>
+                    </button>
+                    <button class="btn btn-outline-secondary" type="button" title="재탐지" onclick="reDetectSite('https://www.mcst.go.kr/press/list', '문화체육관광부 소통마당')">
+                      <i class="bi bi-arrow-clockwise" aria-hidden="true"></i>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+
+              [5번 사이트 (조치 완료)]
+              <tr>
+                <td>
+                  <a href="#" class="fw-semibold text-decoration-none">
+                    보건복지부 복지포털 복지로
+                  </a>
+                  <div class="small text-secondary font-monospace">https://www.bokjiro.go.kr/community/board</div>
+                </td>
+                <td>
+                  <span class="badge text-bg-secondary">차단 조치완료</span>
+                </td>
+                <td style="min-width: 8rem">
+                  <div class="d-flex align-items-center gap-2">
+                    <div class="progress flex-grow-1" style="height: 6px">
+                      <div
+                        class="progress-bar bg-secondary"
+                        role="progressbar"
+                        style="width: 100%"
+                        aria-valuenow="100"
+                        aria-valuemin="0"
+                        aria-valuemax="100"
+                      ></div>
+                    </div>
+                    <small class="text-secondary fw-bold" style="min-width: 2.25rem"> 조치완료 </small>
+                  </div>
+                </td>
+                <td>
+                  <div class="d-inline-flex gap-1 flex-wrap">
+                    <span class="badge text-bg-secondary-subtle text-secondary border" title="배경색 일치 투명 텍스트 (조치완료)">TRANS (1)</span>
+                  </div>
+                </td>
+                <td class="text-nowrap">
+                  <span class="fw-bold text-secondary">1건</span>
+                  <div class="small text-secondary">(소요: 110초)</div>
+                </td>
+                <td class="text-nowrap text-secondary">2026-10-23 15:45</td>
+                <td>
+                  <span class="badge text-bg-secondary"> 해결 </span>
+                </td>
+                <td class="text-end" onclick="event.stopPropagation();">
+                  <div class="btn-group btn-group-sm">
+                    <button class="btn btn-outline-secondary" type="button" title="탐지 상세 내역 보기" onclick="location.href='/mgr/search?url=' + encodeURIComponent('https://www.bokjiro.go.kr/community/board')">
+                      <i class="bi bi-eye" aria-hidden="true"></i>
+                    </button>
+                    <button class="btn btn-outline-secondary" type="button" title="result.json 확인" onclick="openResultJsonModal()">
+                      <i class="bi bi-file-earmark-code" aria-hidden="true"></i>
+                    </button>
+                    <button class="btn btn-outline-secondary" type="button" title="재탐지" onclick="reDetectSite('https://www.bokjiro.go.kr/community/board', '보건복지부 복지포털 복지로')">
+                      <i class="bi bi-arrow-clockwise" aria-hidden="true"></i>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+
+              [6번 사이트 (정상 안전)]
+              <tr>
+                <td>
+                  <a href="#" class="fw-semibold text-decoration-none">
+                    국민건강보험공단 민원신청 포털
+                  </a>
+                  <div class="small text-secondary font-monospace">https://www.nhis.or.kr/minwon/service</div>
+                </td>
+                <td>
+                  <span class="badge text-bg-success">정상 (안전)</span>
+                </td>
+                <td style="min-width: 8rem">
+                  <div class="d-flex align-items-center gap-2">
+                    <div class="progress flex-grow-1" style="height: 6px">
+                      <div
+                        class="progress-bar bg-success"
+                        role="progressbar"
+                        style="width: 0%"
+                        aria-valuenow="0"
+                        aria-valuemin="0"
+                        aria-valuemax="100"
+                      ></div>
+                    </div>
+                    <small class="text-success fw-bold" style="min-width: 2.25rem"> 0% </small>
+                  </div>
+                </td>
+                <td>
+                  <span class="badge text-bg-light text-secondary border">미검출 (0)</span>
+                </td>
+                <td class="text-nowrap">
+                  <span class="fw-bold text-success">0건</span>
+                  <div class="small text-secondary">(소요: 78초)</div>
+                </td>
+                <td class="text-nowrap text-secondary">2026-10-23 14:10</td>
+                <td>
+                  <span class="badge text-bg-success"> 정상 </span>
+                </td>
+                <td class="text-end" onclick="event.stopPropagation();">
+                  <div class="btn-group btn-group-sm">
+                    <button class="btn btn-outline-secondary" type="button" title="탐지 상세 내역 보기" onclick="location.href='/mgr/search?url=' + encodeURIComponent('https://www.nhis.or.kr/minwon/service')">
+                      <i class="bi bi-eye" aria-hidden="true"></i>
+                    </button>
+                    <button class="btn btn-outline-secondary" type="button" title="result.json 확인 (findings: [])" onclick="openResultJsonModal()">
+                      <i class="bi bi-file-earmark-code" aria-hidden="true"></i>
+                    </button>
+                    <button class="btn btn-outline-secondary" type="button" title="재탐지" onclick="reDetectSite('https://www.nhis.or.kr/minwon/service', '국민건강보험공단 민원신청 포털')">
+                      <i class="bi bi-arrow-clockwise" aria-hidden="true"></i>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+              -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card-footer d-flex justify-content-between align-items-center">
+        <% 
+          const p = (typeof pagination !== 'undefined' && pagination) ? pagination : { page: 1, perPage: 30, totalCount: (masterList ? masterList.length : 0), totalPages: 1, hasPrev: false, hasNext: false };
+          const startIdx = p.totalCount > 0 ? (p.page - 1) * p.perPage + 1 : 0;
+          const endIdx = Math.min(p.totalCount, p.page * p.perPage);
+        %>
+        <small class="text-secondary">
+          총 <%= p.totalCount %>개 점검 사이트 중 <%= startIdx %>~<%= endIdx %>개 표시 (페이지 <%= p.page %> / <%= p.totalPages %>)
+        </small>
+        <nav aria-label="Pagination">
+          <ul class="pagination pagination-sm mb-0">
+            <% 
+              const qK = typeof keyword !== 'undefined' && keyword ? '&keyword=' + encodeURIComponent(keyword) : '';
+              const qS = typeof statusFilter !== 'undefined' && statusFilter ? '&statusFilter=' + encodeURIComponent(statusFilter) : '';
+              const queryExtra = qK + qS;
+            %>
+            <!-- 이전 페이지 링크 -->
+            <li class="page-item <%= p.hasPrev ? '' : 'disabled' %>">
+              <a class="page-link" href="<%= p.hasPrev ? '/mgr/index?page=' + p.prevPage + queryExtra : '#' %>" tabindex="<%= p.hasPrev ? '0' : '-1' %>">이전</a>
+            </li>
+
+            <!-- 페이지 번호 버튼들 -->
+            <% 
+              const maxVisible = 5;
+              let startPage = Math.max(1, p.page - Math.floor(maxVisible / 2));
+              let endPage = Math.min(p.totalPages, startPage + maxVisible - 1);
+              if (endPage - startPage + 1 < maxVisible) {
+                startPage = Math.max(1, endPage - maxVisible + 1);
+              }
+              for (let i = startPage; i <= endPage; i++) { 
+            %>
+              <li class="page-item <%= i === p.page ? 'active' : '' %>">
+                <a class="page-link" href="/mgr/index?page=<%= i %><%= queryExtra %>"><%= i %></a>
+              </li>
+            <% } %>
+
+            <!-- 다음 페이지 링크 -->
+            <li class="page-item <%= p.hasNext ? '' : 'disabled' %>">
+              <a class="page-link" href="<%= p.hasNext ? '/mgr/index?page=' + p.nextPage + queryExtra : '#' %>" tabindex="<%= p.hasNext ? '0' : '-1' %>">다음</a>
+            </li>
+          </ul>
+        </nav>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!--begin::result.json 확인 및 저장 모달 레이어-->
+<div class="modal fade" id="modal-result-json" tabindex="-1" aria-labelledby="modal-result-json-title" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content shadow">
+      <div class="modal-header bg-light">
+        <h5 class="modal-title fs-6 fw-bold text-dark" id="modal-result-json-title">
+          <i class="bi bi-filetype-json text-primary me-2"></i>점검 결과 파일 확인 및 저장
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="닫기"></button>
+      </div>
+      <div class="modal-body p-3">
+        <!-- 파일 생성 경로 및 상태 안내 -->
+        <div class="p-3 mb-3 bg-light rounded border">
+          <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <div>
+              <div class="small fw-bold text-secondary mb-1">
+                <i class="bi bi-folder-check me-1 text-success"></i>결과 출처:
+                <code class="text-dark bg-white px-2 py-1 rounded border font-monospace" id="modal-result-json-path">점검 이력 확인 중</code>
+              </div>
+              <div class="small text-muted" id="modal-result-json-meta">
+                생성 일시: 확인 중... | 파일 크기: 확인 중...
+              </div>
+            </div>
+            <button type="button" class="btn btn-outline-secondary btn-sm d-none" id="btn-modal-open-folder" title="Windows 탐색기에서 파일 위치 열기">
+              <i class="bi bi-folder2-open me-1"></i>저장 폴더 열기
+            </button>
+          </div>
+        </div>
+
+        <div class="btn-group btn-group-sm mb-2" role="group" aria-label="결과 파일 선택">
+          <button type="button" class="btn btn-outline-primary" id="btn-modal-result-main">result.json</button>
+          <button type="button" class="btn btn-outline-primary" id="btn-modal-result-extra">result_extra.json</button>
+        </div>
+        <!-- JSON 데이터 프리뷰 박스 -->
+        <div class="position-relative">
+          <div class="d-flex justify-content-between align-items-center mb-1">
+            <span class="small fw-semibold text-secondary">
+              <i class="bi bi-code-square me-1"></i>JSON 내용 미리보기
+            </span>
+            <button type="button" class="btn btn-sm btn-outline-primary py-0 px-2 fs-7" id="btn-modal-copy-json">
+              <i class="bi bi-clipboard me-1"></i>전체 복사
+            </button>
+          </div>
+          <pre id="modal-result-json-code" class="bg-dark text-light p-3 rounded font-monospace small mb-0" style="max-height: 380px; overflow: auto; user-select: text; white-space: pre-wrap; word-break: break-all;">데이터를 불러오는 중입니다...</pre>
+        </div>
+      </div>
+      <div class="modal-footer bg-light py-2">
+        <span class="small me-auto" id="modal-result-json-save-status" role="status"></span>
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">닫기</button>
+        <button type="button" class="btn btn-primary btn-sm" id="btn-modal-save-file">
+          <i class="bi bi-download me-1"></i>파일로 저장 (다운로드)
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+<!--end::result.json 확인 및 저장 모달 레이어-->
+
+<script src="/js/result-json-save.js"></script>
+<script>
+  // result.json 표준 스키마 확인 및 저장 모달 열기 전역 함수 (새 창 팝업 원천 차단)
+  async function openResultJsonModal(masterId, type = 'auto') {
+    const modalEl = document.getElementById('modal-result-json');
+    const pathEl = document.getElementById('modal-result-json-path');
+    const metaEl = document.getElementById('modal-result-json-meta');
+    const codeEl = document.getElementById('modal-result-json-code');
+    const btnCopy = document.getElementById('btn-modal-copy-json');
+    const btnSave = document.getElementById('btn-modal-save-file');
+    const saveStatusEl = document.getElementById('modal-result-json-save-status');
+    const btnOpenFolder = document.getElementById('btn-modal-open-folder');
+    const btnMain = document.getElementById('btn-modal-result-main');
+    const btnExtra = document.getElementById('btn-modal-result-extra');
+
+    if (!modalEl) return;
+
+    // Bootstrap Modal Stacking Context 방지: 모달을 body 직속 자식으로 이동
+    if (modalEl.parentNode !== document.body) {
+      document.body.appendChild(modalEl);
+    }
+
+    if (codeEl) codeEl.textContent = 'result.json 데이터를 불러오는 중입니다...';
+    if (saveStatusEl) saveStatusEl.textContent = '';
+    if (btnSave) btnSave.disabled = true;
+
+    const modalInstance = bootstrap.Modal.getOrCreateInstance(modalEl);
+    modalInstance.show();
+
+    let resultData = null;
+    let formattedJson = '';
+    let selectedFilename = 'result.json';
+
+    if (!Number.isSafeInteger(Number(masterId)) || Number(masterId) < 1) {
+      if (codeEl) codeEl.textContent = '점검 이력이 없는 예시 화면입니다.';
+      return;
+    }
+
+    try {
+      const res = await fetch(`/mgr/api/detect/result-json?view=1&masterId=${encodeURIComponent(masterId)}&type=${encodeURIComponent(type)}`);
+      const json = await res.json();
+      if (json.success && json.data) {
+        resultData = json.data;
+        selectedFilename = json.filename;
+        formattedJson = JSON.stringify(resultData, null, 2);
+        if (pathEl) pathEl.textContent = `점검 회차 #${masterId} · 이력 DB (${selectedFilename})`;
+        if (metaEl) {
+          metaEl.textContent = `파일 크기: ${(json.size / 1024).toFixed(1)} KB | 이 파일: ${json.data.findings.length}건 | 중복 제외: ${json.counts.duplicate}건`;
+        }
+        if (btnMain) {
+          btnMain.textContent = `result.json (${json.counts.main})`;
+          btnMain.classList.toggle('active', json.type === 'main');
+        }
+        if (btnExtra) {
+          btnExtra.textContent = `result_extra.json (${json.counts.extra})`;
+          btnExtra.classList.toggle('active', json.type === 'extra');
+        }
+        if (codeEl) codeEl.textContent = formattedJson;
+        if (btnSave) btnSave.disabled = false;
+      } else {
+        if (codeEl) codeEl.textContent = json.message || '결과 파일을 만들 수 없습니다.';
+      }
+    } catch (err) {
+      if (codeEl) codeEl.textContent = '오류 발생: ' + err.message;
+    }
+
+    if (btnMain) btnMain.onclick = () => openResultJsonModal(masterId, 'main');
+    if (btnExtra) btnExtra.onclick = () => openResultJsonModal(masterId, 'extra');
+
+    // 복사 버튼 이벤트 바인딩
+    if (btnCopy) {
+      btnCopy.onclick = async function () {
+        if (!formattedJson) return;
+        try {
+          await navigator.clipboard.writeText(formattedJson);
+          btnCopy.innerHTML = `<i class="bi bi-check-lg me-1 text-success"></i>복사 완료`;
+          setTimeout(() => {
+            btnCopy.innerHTML = `<i class="bi bi-clipboard me-1"></i>전체 복사`;
+          }, 2000);
+        } catch (e) {
+          alert('클립보드 복사 실패: ' + e.message);
+        }
+      };
+    }
+
+    // 화면에 표시한 JSON을 그대로 저장
+    if (btnSave) {
+      btnSave.onclick = async function () {
+        await window.saveDisplayedResultJson(formattedJson, selectedFilename, btnSave, saveStatusEl);
+      };
+    }
+
+    // 탐색기 폴더 열기 이벤트 바인딩
+    if (btnOpenFolder) {
+      btnOpenFolder.onclick = async function () {
+        try {
+          const res = await fetch('/mgr/api/detect/open-result-folder', { method: 'POST' });
+          const json = await res.json();
+          if (!json.success) {
+            alert(json.message || '폴더 열기 실패');
+          }
+        } catch (e) {
+          alert('폴더 열기 오류: ' + e.message);
+        }
+      };
+    }
+  }
+
+  // 재탐지 실행 전역 함수 (사용자 규칙: 액션 실행 전 confirm 확인 필수)
+  function reDetectSite(url, title) {
+    if (!url) return;
+    const siteName = title || url;
+    const confirmMsg = `'${siteName}' 웹사이트에 대해 재탐지를 시작하시겠습니까?\n\n` +
+      `점검 대상 URL: ${url}\n` +
+      `확인 시 탐지 페이지로 이동하여 최신 4대 은닉 기법 및 AI 판정이 즉시 시작됩니다.`;
+
+    if (confirm(confirmMsg)) {
+      window.location.href = '/mgr/search?entryUrl=' + encodeURIComponent(url) + '&autoStart=true';
+    }
+  }
+</script>

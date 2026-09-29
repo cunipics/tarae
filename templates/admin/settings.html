@@ -1,0 +1,212 @@
+        <div class="app-content-header">
+          <div class="container-fluid">
+            <div class="row">
+              <div class="col-sm-6">
+                <h1 class="mb-0 fs-3">환경설정</h1>
+              </div>
+              <div class="col-sm-6">
+                <nav aria-label="breadcrumb">
+                  <ol class="breadcrumb float-sm-end">
+                    <li class="breadcrumb-item"><a href="#">Home</a></li>
+                    <li class="breadcrumb-item active" aria-current="page">환경설정</li>
+                  </ol>
+                </nav>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="app-content">
+          <div class="container-fluid">
+            <div class="row g-3">
+              <!-- Left rail -->
+              <div class="col-md-3">
+                <div
+                  class="list-group list-group-flush nav nav-pills flex-column"
+                  id="settings-nav"
+                  role="tablist"
+                >
+                  <a
+                    href="#crawler-settings"
+                    class="list-group-item list-group-item-action active"
+                    data-bs-toggle="pill"
+                    role="tab"
+                    id="crawler-settings-tab"
+                  >
+                    <i class="bi bi-robot me-2" aria-hidden="true"></i>지능형 검출
+                  </a>
+                </div>
+              </div>
+
+              <!-- Tab content -->
+              <div class="col-md-9">
+                <div class="tab-content">
+
+                  <!-- 지능형 검출 설정 -->
+                  <div class="tab-pane fade show active" id="crawler-settings" role="tabpanel">
+                    <div class="card">
+                      <div class="card-header">
+                        <h3 class="card-title">지능형 검출 설정</h3>
+                      </div>
+                      <div class="card-body">
+                        <p class="text-secondary small mb-3">크롤링 시작 전 URL 버퍼 생성 단계에 사용할 소스와 제어 옵션을 설정합니다. 부하가 많은 항목은 상황에 맞게 OFF 할 수 있습니다.</p>
+
+                        <div id="crawler-settings-alert" class="d-none"></div>
+
+                        <!-- 토글 항목 -->
+                        <div class="d-flex justify-content-between align-items-start py-2 border-bottom">
+                          <div>
+                            <p class="mb-0 fw-semibold">알려진 검색내용 활용 (DuckDuckGo 색인 Dorking)</p>
+                            <small class="text-secondary">검색엔진 색인에서 오염 키워드(환경변수 SEARCH_DORK_KEYWORDS)로 노출된 URL을 역조회하여 노출된 색인 게시판부터 우선 크롤링. (외부 무료, 기본 ON)</small>
+                          </div>
+                          <div class="form-check form-switch mb-0">
+                            <input class="form-check-input" type="checkbox" role="switch" id="cfg-useSearchDork" />
+                            <label class="visually-hidden" for="cfg-useSearchDork">알려진 검색내용 활용</label>
+                          </div>
+                        </div>
+
+                        <div class="d-flex justify-content-between align-items-start py-2 border-bottom">
+                          <div>
+                            <p class="mb-0 fw-semibold">Common Crawl 역조회</p>
+                            <small class="text-secondary">과거 크롤에서 발견된 URL 역조회. 링크가 끊어진 스팸 페이지 발굴에 유용. (외부 API, 무료)</small>
+                          </div>
+                          <div class="form-check form-switch mb-0">
+                            <input class="form-check-input" type="checkbox" role="switch" id="cfg-useCommonCrawl" />
+                            <label class="visually-hidden" for="cfg-useCommonCrawl">Common Crawl 역조회</label>
+                          </div>
+                        </div>
+
+                        <div class="d-flex justify-content-between align-items-start py-2 border-bottom">
+                          <div>
+                            <p class="mb-0 fw-semibold">urlscan.io 히스토리 역조회</p>
+                            <small class="text-secondary">보안 연구자 스캔 기록에서 URL 발굴. (외부 API, 무료)</small>
+                          </div>
+                          <div class="form-check form-switch mb-0">
+                            <input class="form-check-input" type="checkbox" role="switch" id="cfg-useUrlscan" />
+                            <label class="visually-hidden" for="cfg-useUrlscan">urlscan.io 히스토리</label>
+                          </div>
+                        </div>
+
+                        <div class="d-flex justify-content-between align-items-start py-2 border-bottom">
+                          <div>
+                            <p class="mb-0 fw-semibold">알려진 취약점 공략 (CMS 딕셔너리)</p>
+                            <small class="text-secondary">CMS 식별 후 그누보드5, WordPress, 전자정부프레임워크(CVE), 나모CrossEditor(KISA) 등 취약 경로 자동 공략.</small>
+                          </div>
+                          <div class="form-check form-switch mb-0">
+                            <input class="form-check-input" type="checkbox" role="switch" id="cfg-useCmsVulnDict" />
+                            <label class="visually-hidden" for="cfg-useCmsVulnDict">알려진 취약점 공략</label>
+                          </div>
+                        </div>
+
+                        <div class="d-flex justify-content-between align-items-start py-2 border-bottom">
+                          <div>
+                            <p class="mb-0 fw-semibold">RSS/Atom 피드 URL 수집</p>
+                            <small class="text-secondary">사이트의 RSS/Atom 피드에서 게시물 URL을 추가로 수확.</small>
+                          </div>
+                          <div class="form-check form-switch mb-0">
+                            <input class="form-check-input" type="checkbox" role="switch" id="cfg-useRssFeed" />
+                            <label class="visually-hidden" for="cfg-useRssFeed">RSS/Atom 피드</label>
+                          </div>
+                        </div>
+
+                        <div class="d-flex justify-content-between align-items-start py-2 border-bottom">
+                          <div>
+                            <p class="mb-0 fw-semibold">URL 무한증식 방지 정규화</p>
+                            <small class="text-secondary">동일 구조 중복 매개변수나 루프 경로를 정규화하여 제거.</small>
+                          </div>
+                          <div class="form-check form-switch mb-0">
+                            <input class="form-check-input" type="checkbox" role="switch" id="cfg-useUrlNormalize" />
+                            <label class="visually-hidden" for="cfg-useUrlNormalize">URL 정규화</label>
+                          </div>
+                        </div>
+
+                        <!-- 수치 설정 항목 -->
+                        <div class="row g-3 pt-3">
+                          <div class="col-md-6">
+                            <label class="form-label fw-semibold" for="cfg-maxPathDepth">최대 경로 깊이 (Depth)</label>
+                            <input type="number" class="form-control" id="cfg-maxPathDepth" min="1" max="20" placeholder="기본 6" />
+                            <div class="form-text">하위 디렉터리 경로 계층 한도. 초과 시 버퍼에서 제외.</div>
+                          </div>
+                        </div>
+
+                      </div>
+                      <div class="card-footer text-end">
+                        <button type="button" class="btn btn-primary" id="btn-save-crawler-settings">설정 저장</button>
+                      </div>
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const FIELDS = [
+    { id: 'cfg-useSearchDork',   key: 'useSearchDork',   type: 'bool' },
+    { id: 'cfg-useCommonCrawl',  key: 'useCommonCrawl',  type: 'bool' },
+    { id: 'cfg-useUrlscan',      key: 'useUrlscan',      type: 'bool' },
+    { id: 'cfg-useCmsVulnDict',  key: 'useCmsVulnDict',  type: 'bool' },
+    { id: 'cfg-useRssFeed',      key: 'useRssFeed',      type: 'bool' },
+    { id: 'cfg-useUrlNormalize', key: 'useUrlNormalize', type: 'bool' },
+    { id: 'cfg-maxPathDepth',    key: 'maxPathDepth',    type: 'num'  }
+  ];
+
+  function showAlert(msg, type) {
+    const el = document.getElementById('crawler-settings-alert');
+    if (!el) return;
+    el.className = 'alert alert-' + (type || 'success');
+    el.textContent = msg;
+    setTimeout(() => el.className = 'd-none', 3000);
+  }
+
+  function applyConfig(cfg) {
+    FIELDS.forEach(f => {
+      const el = document.getElementById(f.id);
+      if (!el) return;
+      if (f.type === 'bool') el.checked = !!cfg[f.key];
+      else el.value = cfg[f.key] ?? '';
+    });
+  }
+
+  async function loadSettings() {
+    try {
+      const resp = await fetch('/mgr/api/crawler-config');
+      const json = await resp.json();
+      if (json.success) applyConfig(json.data);
+    } catch(e) { showAlert('설정 불러오기 실패: ' + e.message, 'danger'); }
+  }
+
+  async function saveSettings() {
+    const body = {};
+    FIELDS.forEach(f => {
+      const el = document.getElementById(f.id);
+      if (!el) return;
+      body[f.key] = f.type === 'bool' ? el.checked : parseInt(el.value, 10);
+    });
+    try {
+      const resp = await fetch('/mgr/api/crawler-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const json = await resp.json();
+      showAlert(json.message || '저장되었습니다.', json.success ? 'success' : 'danger');
+    } catch(e) { showAlert('저장 실패: ' + e.message, 'danger'); }
+  }
+
+  document.addEventListener('DOMContentLoaded', function() {
+    loadSettings();
+    const saveBtn = document.getElementById('btn-save-crawler-settings');
+    if (saveBtn) saveBtn.addEventListener('click', saveSettings);
+  });
+
+  const tabEl = document.getElementById('crawler-settings-tab');
+  if (tabEl) tabEl.addEventListener('shown.bs.tab', loadSettings);
+}());
+</script>

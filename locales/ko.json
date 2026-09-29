@@ -1,0 +1,11 @@
+{
+  "hello": "안녕하세요",
+  "login": "로그인",
+  "logout": "로그아웃",
+  "login_result": "로그인 결과",
+  "login_failed": "로그인에 실패했습니다",
+  "admin_dashboard": "관리자 대시보드",
+  "recent_users": "최근 사용자",
+  "menu": "메뉴",
+  "menu.dashboard": "대시보드"
+}

@@ -1,0 +1,920 @@
+<style>
+  /* 큼직하고 선명한 정화소 리본 스타일 (기본 크기 통일) */
+  .ribbon-wrapper {
+    height: 105px;
+    overflow: hidden;
+    position: absolute;
+    right: -2px;
+    top: -2px;
+    width: 105px;
+    z-index: 10;
+    pointer-events: none;
+  }
+  .ribbon-wrapper .ribbon {
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
+    font-size: 0.95rem;
+    font-weight: 800;
+    line-height: 120%;
+    padding: 7px 0;
+    position: relative;
+    right: 0px;
+    text-align: center;
+    top: 22px;
+    transform: rotate(45deg);
+    width: 145px;
+    letter-spacing: 2px;
+  }
+  /* 모든 카드 박스 기본 크기 통일 */
+  .cleanse-card-item {
+    min-height: 10.5rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+  .cleanse-card-item .card-body {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+  }
+  .cleanse-card-item .card-footer {
+    flex-shrink: 0;
+  }
+  /* 모달 백드롭 뒤에 모달이 갇혀 폼이 비활성화되는 버그 원천 방지 */
+  .modal {
+    z-index: 1065 !important;
+  }
+  .modal-backdrop {
+    z-index: 1055 !important;
+  }
+  .modal-dialog {
+    pointer-events: auto !important;
+  }
+  .modal-content {
+    pointer-events: auto !important;
+  }
+</style>
+
+<!--begin::App Content Header-->
+<div class="app-content-header">
+  <div class="container-fluid">
+    <div class="row">
+      <div class="col-sm-6">
+        <h1 class="mb-0 fs-3">데이터 정화소</h1>
+      </div>
+      <div class="col-sm-6">
+        <nav aria-label="breadcrumb">
+          <ol class="breadcrumb float-sm-end">
+            <li class="breadcrumb-item"><a href="/mgr/index">홈</a></li>
+            <li class="breadcrumb-item active" aria-current="page">데이터 정화소</li>
+          </ol>
+        </nav>
+      </div>
+    </div>
+  </div>
+</div>
+<!--end::App Content Header-->
+
+<!--begin::App Content-->
+<div class="app-content">
+  <div class="container-fluid">
+    <!-- 정화소 상단 안내 및 등록 바 -->
+    <div class="callout callout-info mb-4 shadow-sm bg-body">
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+          <h5 class="fw-bold mb-1">데이터 정화소 관리 안내 (4단계 체계)</h5>
+          <p class="mb-0 text-secondary small">
+            패턴을 <strong>대기</strong>, <strong>의심(AI 검토)</strong>, <strong>오염(차단)</strong>, <strong>예외(허용)</strong> 4단계로 분류하여 관리합니다.
+            <span class="text-danger fw-semibold">"오염"</span>으로 등록된 패턴은 AI 질의 없이 발견 즉시 100% 불법 스팸으로 확정 차단됩니다.
+          </p>
+        </div>
+        <button type="button" class="btn btn-primary btn-sm fw-semibold shadow-sm" onclick="openRegisterModal('WAIT')">
+          + 신규 등록
+        </button>
+      </div>
+    </div>
+
+    <!-- 데이터 정화소 전체 실시간 검색창 바 -->
+    <div class="card mb-4 shadow-sm border-0 bg-body-tertiary">
+      <div class="card-body py-3 px-4">
+        <div class="row g-2 align-items-center">
+          <div class="col-md-8 col-sm-12">
+            <div class="input-group shadow-sm">
+              <span class="input-group-text bg-body border-end-0"><i class="bi bi-search text-muted"></i></span>
+              <input type="text" id="cleanroom-search-input" class="form-control border-start-0 ps-0" placeholder="등록된 패턴 문구 또는 설명 검색..." oninput="handleCleanroomSearch(this.value)" onkeydown="if(event.key === 'Enter') doCleanroomSearch()">
+              <button class="btn btn-primary fw-semibold px-3" type="button" onclick="doCleanroomSearch()"><i class="bi bi-search me-1"></i>검색</button>
+              <button class="btn btn-outline-secondary" type="button" onclick="clearCleanroomSearch()">초기화</button>
+            </div>
+          </div>
+          <div class="col-md-4 col-sm-12 text-md-end text-sm-start text-secondary small">
+            <span id="search-result-info">전체 <strong>0</strong>개 패턴 로딩 중...</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 1. 대기 리스트 섹션 -->
+    <div class="mb-5" id="section-wait-list">
+      <div class="d-flex align-items-center mb-3 pb-2 border-bottom">
+        <h4 class="fw-bold mb-0 text-secondary">대기</h4>
+        <span class="badge text-bg-secondary fs-7 fw-bold ms-2" id="badge-cnt-wait">0건</span>
+      </div>
+      <div class="row g-4" id="grid-wait-list">
+        <!-- 동적 렌더링 -->
+      </div>
+    </div>
+
+    <!-- 2. 의심(AI 검토) 섹션 -->
+    <div class="mb-5" id="section-suspect-list">
+      <div class="d-flex align-items-center mb-3 pb-2 border-bottom">
+        <h4 class="fw-bold mb-0 text-warning">의심(AI 검토)</h4>
+        <span class="badge text-bg-warning fs-7 fw-bold ms-2" id="badge-cnt-suspect">0건</span>
+      </div>
+      <div class="row g-4" id="grid-suspect-list">
+        <!-- 동적 렌더링 -->
+      </div>
+    </div>
+
+    <!-- 3. 오염(차단) 섹션 -->
+    <div class="mb-5" id="section-polluted-list">
+      <div class="d-flex align-items-center mb-3 pb-2 border-bottom">
+        <h4 class="fw-bold mb-0 text-danger">오염(차단)</h4>
+        <span class="badge text-bg-danger fs-7 fw-bold ms-2" id="badge-cnt-polluted">0건</span>
+      </div>
+      <div class="row g-4" id="grid-polluted-list">
+        <!-- 동적 렌더링 -->
+      </div>
+    </div>
+
+    <!-- 4. 예외(허용) 섹션 -->
+    <div class="mb-5" id="section-exception-list">
+      <div class="d-flex align-items-center mb-3 pb-2 border-bottom">
+        <h4 class="fw-bold mb-0 text-success">예외(허용)</h4>
+        <span class="badge text-bg-success fs-7 fw-bold ms-2" id="badge-cnt-clean">0건</span>
+      </div>
+      <div class="row g-4" id="grid-clean-list">
+        <!-- 동적 렌더링 -->
+      </div>
+    </div>
+
+    <!-- 전체 하단 등록 버튼 영역 -->
+    <div class="text-center py-4 border-top">
+      <button type="button" class="btn btn-primary px-4 py-2 fw-semibold shadow-sm" onclick="openRegisterModal('WAIT')">
+        + 신규 등록
+      </button>
+    </div>
+
+  </div>
+  <!--end::Container-->
+</div>
+<!--end::App Content-->
+
+<!-- 1. 신규 패턴 등록 모달 레이어 -->
+<div class="modal fade" id="modal-cleanse-register" tabindex="-1" aria-labelledby="modalCleanseTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content shadow">
+      <div class="modal-header bg-body-tertiary">
+        <h5 class="modal-title fw-bold" id="modalCleanseTitle">신규 패턴 문구 등록</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form id="form-cleanse-modal" onsubmit="return false;">
+          <div class="mb-3">
+            <label for="modal-select-target" class="form-label fw-semibold">등록 대상 리스트</label>
+            <select class="form-select" id="modal-select-target" onchange="onRegisterTargetChange(this.value)">
+              <option value="WAIT" selected>대기</option>
+              <option value="SUSPECT">의심(AI 검토)</option>
+              <option value="POLLUTED">오염(차단)</option>
+              <option value="EXCEPTION">예외(허용)</option>
+            </select>
+          </div>
+          <div class="mb-3">
+            <label for="modal-input-pattern" class="form-label fw-semibold">패턴 문구</label>
+            <textarea class="form-control" id="modal-input-pattern" rows="3" placeholder="패턴 문구를 입력하세요..."></textarea>
+          </div>
+          <div class="mb-3">
+            <label for="modal-input-memo" id="modal-label-memo" class="form-label fw-semibold text-danger">설명 (필수)</label>
+            <input type="text" class="form-control" id="modal-input-memo" placeholder="해당 키워드/은어의 뜻 또는 설명을 입력하세요.">
+          </div>
+          <div class="mb-3 d-none" id="modal-required-terms-wrap">
+            <label for="modal-input-required-terms" class="form-label fw-semibold">짝 단어 (선택)</label>
+            <input type="text" class="form-control" id="modal-input-required-terms" placeholder="쉼표로 구분하세요. 예: 마약,판매,구매,텔레">
+            <div class="form-text small text-secondary">의심 단어와 짝 단어가 하나 이상 함께 나올 때만 AI 검사를 실행합니다.</div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer bg-body-tertiary">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">취소</button>
+        <button type="button" class="btn btn-primary fw-semibold px-3" onclick="submitModalRegister()">
+          등록하기
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 2. 패턴 문구 수정 모달 레이어 -->
+<div class="modal fade" id="modal-cleanse-edit" tabindex="-1" aria-labelledby="modalEditTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content shadow">
+      <div class="modal-header bg-body-tertiary">
+        <h5 class="modal-title fw-bold" id="modalEditTitle">패턴 문구 수정</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form id="form-cleanse-edit" onsubmit="return false;">
+          <input type="hidden" id="modal-edit-id" value="">
+          <div class="mb-3">
+            <label for="modal-edit-pattern" class="form-label fw-semibold">패턴 문구</label>
+            <textarea class="form-control" id="modal-edit-pattern" rows="3" placeholder="수정할 패턴 문구를 입력하세요..."></textarea>
+          </div>
+          <div class="mb-3">
+            <label for="modal-edit-memo" id="modal-edit-label-memo" class="form-label fw-semibold text-danger">설명 (필수)</label>
+            <input type="text" class="form-control" id="modal-edit-memo" placeholder="해당 키워드/은어의 뜻 또는 설명을 입력하세요.">
+          </div>
+          <div class="mb-3 d-none" id="modal-edit-required-terms-wrap">
+            <label for="modal-edit-required-terms" class="form-label fw-semibold">짝 단어 (선택)</label>
+            <input type="text" class="form-control" id="modal-edit-required-terms" placeholder="쉼표로 구분하세요. 예: 마약,판매,구매,텔레">
+            <div class="form-text small text-secondary">비워두면 해당 의심 단어는 기존 방식으로 검사합니다.</div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer bg-body-tertiary">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">취소</button>
+        <button type="button" class="btn btn-primary fw-semibold px-3" onclick="submitModalEdit()">
+          수정 저장
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 3. 상태 이동 시 설명 입력 및 안내 모달 레이어 -->
+<div class="modal fade" id="modal-cleanse-move" tabindex="-1" aria-labelledby="modalMoveTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content shadow">
+      <div class="modal-header bg-body-tertiary">
+        <h5 class="modal-title fw-bold" id="modalMoveTitle">상태 이동 안내</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form id="form-cleanse-move" onsubmit="return false;">
+          <input type="hidden" id="modal-move-id" value="">
+          <input type="hidden" id="modal-move-target-status" value="">
+
+          <div class="alert alert-warning py-2 mb-3 small" id="modal-move-alert-msg">
+            의심 또는 오염 상태로 이동하려면 설명을 반드시 입력해야 합니다.
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label fw-semibold text-secondary small">이동 대상 패턴 문구</label>
+            <div id="modal-move-pattern-text" class="p-2 bg-body-tertiary rounded border font-monospace small fw-bold text-body text-break"></div>
+          </div>
+
+          <div class="mb-3">
+            <label for="modal-move-input-memo" class="form-label fw-semibold text-danger">설명 (필수)</label>
+            <input type="text" class="form-control" id="modal-move-input-memo" placeholder="해당 키워드의 구체적인 뜻이나 설명을 입력하세요." onkeydown="if(event.key === 'Enter') submitModalMove()">
+            <div class="form-text small text-secondary">의심(AI 검토) 또는 오염(차단) 이동 시 설명 입력이 필수입니다.</div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer bg-body-tertiary">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">취소</button>
+        <button type="button" class="btn btn-primary fw-semibold px-3" onclick="submitModalMove()">
+          설명 저장 및 이동
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 프론트엔드 DB 연동 스크립트 (수정, 삭제, 이동, 등록) -->
+<script>
+  let currentCleanroomList = [];
+  let currentSearchQuery = '';
+
+  // 1. 전체 데이터 로드 및 렌더링
+  async function loadCleanroomData() {
+    try {
+      const res = await fetch('/mgr/api/cleanroom');
+      const data = await res.json();
+      let list = [];
+      if (data && Array.isArray(data.list)) {
+        list = data.list;
+      } else if (data && data.list && Array.isArray(data.list.rows)) {
+        list = data.list.rows;
+      }
+      currentCleanroomList = list;
+      applyFilterAndRender();
+    } catch (err) {
+      console.error('정화소 데이터 로딩 실패:', err);
+    }
+  }
+
+  // 검색 실행 함수 (검색 버튼 클릭 및 엔터 키 입력 시 호출)
+  function doCleanroomSearch() {
+    const inputEl = document.getElementById('cleanroom-search-input');
+    const val = inputEl ? inputEl.value : '';
+    handleCleanroomSearch(val);
+  }
+
+  // 실시간 검색 처리
+  function handleCleanroomSearch(query) {
+    currentSearchQuery = (query !== undefined && query !== null ? query : '').trim().toLowerCase();
+    applyFilterAndRender();
+  }
+
+  // 검색어 초기화
+  function clearCleanroomSearch() {
+    const inputEl = document.getElementById('cleanroom-search-input');
+    if (inputEl) inputEl.value = '';
+    currentSearchQuery = '';
+    applyFilterAndRender();
+    if (inputEl) inputEl.focus();
+  }
+
+  // 검색 필터 적용 후 렌더링
+  function applyFilterAndRender() {
+    const totalCount = currentCleanroomList.length;
+
+    if (!currentSearchQuery) {
+      renderAllGrids(currentCleanroomList);
+      updateSearchInfo(totalCount, totalCount);
+      return;
+    }
+
+    const filtered = currentCleanroomList.filter(item => {
+      const pt = String(item.pattern_text || '').toLowerCase();
+      const memo = String(item.memo || '').toLowerCase();
+      const requiredTerms = String(item.required_terms || '').toLowerCase();
+      return pt.includes(currentSearchQuery) || memo.includes(currentSearchQuery) || requiredTerms.includes(currentSearchQuery);
+    });
+
+    renderAllGrids(filtered);
+    updateSearchInfo(filtered.length, totalCount);
+  }
+
+  // 검색 상태 텍스트 갱신
+  function updateSearchInfo(filteredCount, totalCount) {
+    const infoEl = document.getElementById('search-result-info');
+    if (!infoEl) return;
+    if (currentSearchQuery) {
+      infoEl.innerHTML = `검색 결과: <strong class="text-primary">${filteredCount}</strong>건 (전체 ${totalCount}건)`;
+    } else {
+      infoEl.innerHTML = `전체 <strong>${totalCount}</strong>개 패턴 등록됨`;
+    }
+  }
+
+  // 2. 그리드 렌더링 (4단계: 대기, 의심, 오염, 예외)
+  function renderAllGrids(list) {
+    const gridWait = document.getElementById('grid-wait-list');
+    const gridSuspect = document.getElementById('grid-suspect-list');
+    const gridPol = document.getElementById('grid-polluted-list');
+    const gridClean = document.getElementById('grid-clean-list');
+
+    if (!gridWait || !gridPol || !gridClean) return;
+
+    gridWait.innerHTML = '';
+    if (gridSuspect) gridSuspect.innerHTML = '';
+    gridPol.innerHTML = '';
+    gridClean.innerHTML = '';
+
+    let cntWait = 0;
+    let cntSuspect = 0;
+    let cntPol = 0;
+    let cntClean = 0;
+
+    list.forEach(item => {
+      const col = createCardElement(item);
+      const type = String(item.pattern_type || '').toUpperCase();
+
+      if (type === 'WAIT') {
+        gridWait.appendChild(col);
+        cntWait++;
+      } else if (type === 'SUSPECT') {
+        if (gridSuspect) gridSuspect.appendChild(col);
+        cntSuspect++;
+      } else if (type === 'POLLUTED') {
+        gridPol.appendChild(col);
+        cntPol++;
+      } else if (type === 'EXCEPTION' || type === 'CLEAN') {
+        gridClean.appendChild(col);
+        cntClean++;
+      }
+    });
+
+    const emptyMsg = currentSearchQuery ? '검색어와 일치하는 패턴이 없습니다.' : '등록된 패턴이 없습니다.';
+
+    if (cntWait === 0) {
+      gridWait.innerHTML = `
+        <div class="col-12 text-center py-4 bg-body-tertiary rounded border border-dashed text-secondary small">
+          ${currentSearchQuery ? '검색어와 일치하는 대기 패턴이 없습니다.' : '등록된 대기 패턴이 없습니다.'}
+        </div>
+      `;
+    }
+    if (gridSuspect && cntSuspect === 0) {
+      gridSuspect.innerHTML = `
+        <div class="col-12 text-center py-4 bg-body-tertiary rounded border border-dashed text-secondary small">
+          ${currentSearchQuery ? '검색어와 일치하는 의심 패턴이 없습니다.' : '등록된 의심(LLM 심층 검토) 패턴이 없습니다. 신규 의심 단어를 등록하면 LLM이 정밀 판정합니다.'}
+        </div>
+      `;
+    }
+    if (cntPol === 0) {
+      gridPol.innerHTML = `
+        <div class="col-12 text-center py-4 bg-body-tertiary rounded border border-dashed text-secondary small">
+          ${currentSearchQuery ? '검색어와 일치하는 오염 패턴이 없습니다.' : '등록된 오염(차단) 패턴이 없습니다.'}
+        </div>
+      `;
+    }
+    if (cntClean === 0) {
+      gridClean.innerHTML = `
+        <div class="col-12 text-center py-4 bg-body-tertiary rounded border border-dashed text-secondary small">
+          ${currentSearchQuery ? '검색어와 일치하는 예외 패턴이 없습니다.' : '등록된 예외(허용) 패턴이 없습니다.'}
+        </div>
+      `;
+    }
+
+    const bWait = document.getElementById('badge-cnt-wait');
+    const bSuspect = document.getElementById('badge-cnt-suspect');
+    const bPol = document.getElementById('badge-cnt-polluted');
+    const bClean = document.getElementById('badge-cnt-clean');
+
+    if (bWait) bWait.textContent = cntWait + '건';
+    if (bSuspect) bSuspect.textContent = cntSuspect + '건';
+    if (bPol) bPol.textContent = cntPol + '건';
+    if (bClean) bClean.textContent = cntClean + '건';
+  }
+
+  // 3. 카드 엘리먼트 생성 (한 행당 3개: col-md-4)
+  function createCardElement(item) {
+    const id = item.id;
+    let targetStatus = String(item.pattern_type || '').toUpperCase();
+    if (targetStatus === 'CLEAN') targetStatus = 'EXCEPTION';
+    const pattern = item.pattern_text || '';
+
+    let borderClass = 'border-secondary';
+    let ribbonClass = 'text-bg-secondary';
+    let ribbonText = '대기';
+
+    if (targetStatus === 'SUSPECT') {
+      borderClass = 'border-warning';
+      ribbonClass = 'text-bg-warning';
+      ribbonText = '의심';
+    } else if (targetStatus === 'POLLUTED') {
+      borderClass = 'border-danger';
+      ribbonClass = 'text-bg-danger';
+      ribbonText = '오염';
+    } else if (targetStatus === 'EXCEPTION') {
+      borderClass = 'border-success';
+      ribbonClass = 'text-bg-success';
+      ribbonText = '예외';
+    }
+
+    let dropdownMenuItems = '';
+    if (targetStatus !== 'WAIT') {
+      dropdownMenuItems += `<li><button class="dropdown-item text-secondary fw-semibold" type="button" onclick="moveCleanseItem(${id}, 'WAIT')">대기로 이동</button></li>`;
+    }
+    if (targetStatus !== 'SUSPECT') {
+      dropdownMenuItems += `<li><button class="dropdown-item text-warning fw-semibold" type="button" onclick="moveCleanseItem(${id}, 'SUSPECT')">의심(AI 검토)으로 이동</button></li>`;
+    }
+    if (targetStatus !== 'POLLUTED') {
+      dropdownMenuItems += `<li><button class="dropdown-item text-danger fw-semibold" type="button" onclick="moveCleanseItem(${id}, 'POLLUTED')">오염(차단)으로 이동</button></li>`;
+    }
+    if (targetStatus !== 'EXCEPTION') {
+      dropdownMenuItems += `<li><button class="dropdown-item text-success fw-semibold" type="button" onclick="moveCleanseItem(${id}, 'EXCEPTION')">예외(허용)으로 이동</button></li>`;
+    }
+
+    const col = document.createElement('div');
+    col.className = 'col-md-4 cleanse-card-wrapper';
+    col.dataset.id = id;
+    col.dataset.status = targetStatus;
+
+    col.innerHTML = `
+      <div class="card mb-0 position-relative shadow-sm ${borderClass} cleanse-card-item">
+        <div class="ribbon-wrapper">
+          <div class="ribbon ${ribbonClass}">${ribbonText}</div>
+        </div>
+        <div class="card-body py-4 pe-5">
+          <div class="p-3 bg-body-tertiary rounded border small fw-semibold text-body w-100">
+            <span>패턴문구 : </span>
+            <span class="pattern-text">${escapeHtml(pattern)}</span>
+          </div>
+          ${item.memo ? `<div class="mt-2 small text-secondary px-1 text-truncate" title="${escapeHtml(item.memo)}"><span class="badge text-bg-light border text-secondary me-1">설명</span><span>${escapeHtml(item.memo)}</span></div>` : ''}
+          ${targetStatus === 'SUSPECT' && item.required_terms ? `<div class="mt-2 small text-secondary px-1 text-truncate" title="${escapeHtml(item.required_terms)}"><span class="badge text-bg-light border text-secondary me-1">짝 단어</span><span>${escapeHtml(item.required_terms)}</span></div>` : ''}
+        </div>
+        <div class="card-footer bg-transparent py-2 border-top d-flex justify-content-between align-items-center">
+          <div class="dropdown">
+            <button class="btn btn-sm btn-outline-secondary dropdown-toggle py-1 px-2 fs-7 fw-semibold" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+              이동
+            </button>
+            <ul class="dropdown-menu shadow-sm fs-7">
+              <li><h6 class="dropdown-header">이동할 리스트 선택</h6></li>
+              ${dropdownMenuItems}
+            </ul>
+          </div>
+          <div class="ms-auto d-flex gap-1">
+            <button type="button" class="btn btn-sm btn-outline-primary py-1 px-2 fs-7 fw-semibold" onclick="openEditModal(${id})">
+              수정
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-danger py-1 px-2 fs-7 fw-semibold" onclick="deleteCleanseItem(${id})">
+              삭제
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    return col;
+  }
+
+  // 대상 리스트 변경 시 설명 필수 여부 동적 라벨 표시
+  function onRegisterTargetChange(val) {
+    const labelEl = document.getElementById('modal-label-memo');
+    const requiredTermsWrap = document.getElementById('modal-required-terms-wrap');
+    if (requiredTermsWrap) requiredTermsWrap.classList.toggle('d-none', val !== 'SUSPECT');
+    if (!labelEl) return;
+    if (val === 'SUSPECT' || val === 'POLLUTED') {
+      labelEl.className = 'form-label fw-semibold text-danger';
+      labelEl.textContent = '설명 (필수)';
+    } else {
+      labelEl.className = 'form-label fw-semibold text-secondary';
+      labelEl.textContent = '설명 (선택)';
+    }
+  }
+
+  // 4. 신규 등록 모달 열기
+  function openRegisterModal(defaultTarget) {
+    const modalEl = document.getElementById('modal-cleanse-register');
+    if (modalEl && modalEl.parentNode !== document.body) {
+      document.body.appendChild(modalEl);
+    }
+
+    const sel = document.getElementById('modal-select-target');
+    const target = defaultTarget || 'WAIT';
+    if (sel) sel.value = target;
+
+    const patternEl = document.getElementById('modal-input-pattern');
+    if (patternEl) patternEl.value = '';
+
+    const memoEl = document.getElementById('modal-input-memo');
+    if (memoEl) memoEl.value = '';
+
+    const requiredTermsEl = document.getElementById('modal-input-required-terms');
+    if (requiredTermsEl) requiredTermsEl.value = '';
+
+    onRegisterTargetChange(target);
+
+    if (modalEl && window.bootstrap && window.bootstrap.Modal) {
+      const modal = window.bootstrap.Modal.getOrCreateInstance(modalEl);
+      modal.show();
+      setTimeout(() => {
+        document.getElementById('modal-input-pattern')?.focus();
+      }, 150);
+    }
+  }
+
+  // 5. 신규 패턴 DB 등록
+  async function submitModalRegister() {
+    const target = document.getElementById('modal-select-target')?.value || 'WAIT';
+    const pattern = document.getElementById('modal-input-pattern')?.value.trim();
+    const memo = document.getElementById('modal-input-memo')?.value.trim() || '';
+    const requiredTerms = document.getElementById('modal-input-required-terms')?.value.trim() || '';
+
+    if (!pattern) {
+      alert('패턴 문구를 입력해 주세요.');
+      document.getElementById('modal-input-pattern')?.focus();
+      return;
+    }
+
+    // 키워드 중복 사전 검사
+    const isDup = currentCleanroomList.some(item => (item.pattern_text || '').trim() === pattern);
+    if (isDup) {
+      alert('이미 등록 된 키워드 입니다.');
+      document.getElementById('modal-input-pattern')?.focus();
+      return;
+    }
+
+    // 설명 필수 조건:
+    // "대기", "예외" 상태 등록 시에는 설명이 없어도 됨
+    // "의심" 및 "오염" 상태 등록 시에는 설명이 반드시 있어야 함
+    const isMemoRequired = (target === 'SUSPECT' || target === 'POLLUTED');
+    if (isMemoRequired && !memo) {
+      alert('의심 또는 오염 상태는 설명을 반드시 입력해야 합니다.');
+      document.getElementById('modal-input-memo')?.focus();
+      return;
+    }
+
+    const targetLabel = target === 'WAIT' ? '대기' : (target === 'SUSPECT' ? '의심(AI 검토)' : (target === 'POLLUTED' ? '오염(차단)' : '예외(허용)'));
+    if (!confirm(`입력하신 패턴을 [${targetLabel}]에 등록하시겠습니까?\n\n패턴: "${pattern}"`)) {
+      return;
+    }
+
+    try {
+      const res = await fetch('/mgr/api/cleanroom', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pattern_type: target, pattern_text: pattern, required_terms: target === 'SUSPECT' ? requiredTerms : '', memo: memo })
+      });
+      const data = await res.json();
+      if (!data.success) {
+        alert(data.message || '등록에 실패했습니다.');
+        return;
+      }
+
+      const modalEl = document.getElementById('modal-cleanse-register');
+      if (modalEl && window.bootstrap && window.bootstrap.Modal) {
+        const modal = window.bootstrap.Modal.getInstance(modalEl);
+        if (modal) modal.hide();
+      }
+
+      alert(`[${targetLabel}]에 정상 등록되었습니다.`);
+      await loadCleanroomData();
+    } catch (err) {
+      alert('등록 통신 중 오류가 발생했습니다: ' + err.message);
+    }
+  }
+
+  // 6. 패턴 문구 수정 모달 열기
+  function openEditModal(id) {
+    const modalEl = document.getElementById('modal-cleanse-edit');
+    if (modalEl && modalEl.parentNode !== document.body) {
+      document.body.appendChild(modalEl);
+    }
+
+    const item = currentCleanroomList.find(x => x.id === id);
+    if (!item) return;
+
+    document.getElementById('modal-edit-id').value = id;
+    document.getElementById('modal-edit-pattern').value = item.pattern_text || '';
+    document.getElementById('modal-edit-memo').value = item.memo || '';
+    document.getElementById('modal-edit-required-terms').value = item.required_terms || '';
+    document.getElementById('modal-edit-required-terms-wrap')?.classList.toggle('d-none', item.pattern_type !== 'SUSPECT');
+
+    // 상태에 따른 설명 라벨 표시 (의심/오염 필수, 대기/예외 선택)
+    const labelEl = document.getElementById('modal-edit-label-memo');
+    if (labelEl) {
+      if (item.pattern_type === 'SUSPECT' || item.pattern_type === 'POLLUTED') {
+        labelEl.className = 'form-label fw-semibold text-danger';
+        labelEl.textContent = '설명 (필수)';
+      } else {
+        labelEl.className = 'form-label fw-semibold text-secondary';
+        labelEl.textContent = '설명 (선택)';
+      }
+    }
+
+    if (modalEl && window.bootstrap && window.bootstrap.Modal) {
+      const modal = window.bootstrap.Modal.getOrCreateInstance(modalEl);
+      modal.show();
+      setTimeout(() => {
+        document.getElementById('modal-edit-pattern')?.focus();
+      }, 150);
+    }
+  }
+
+  // 7. 패턴 문구 DB 수정 처리
+  async function submitModalEdit() {
+    const id = document.getElementById('modal-edit-id')?.value;
+    const pattern = document.getElementById('modal-edit-pattern')?.value.trim();
+    const memo = document.getElementById('modal-edit-memo')?.value.trim() || '';
+    const requiredTerms = document.getElementById('modal-edit-required-terms')?.value.trim() || '';
+
+    if (!pattern) {
+      alert('수정할 패턴 문구를 입력해 주세요.');
+      document.getElementById('modal-edit-pattern')?.focus();
+      return;
+    }
+
+    // 본인 제외 키워드 중복 검사
+    const isDup = currentCleanroomList.some(item => item.id !== Number(id) && (item.pattern_text || '').trim() === pattern);
+    if (isDup) {
+      alert('이미 등록 된 키워드 입니다.');
+      document.getElementById('modal-edit-pattern')?.focus();
+      return;
+    }
+
+    const currentItem = currentCleanroomList.find(x => x.id === Number(id));
+    const currentType = currentItem ? currentItem.pattern_type : 'WAIT';
+    const isMemoRequired = (currentType === 'SUSPECT' || currentType === 'POLLUTED');
+
+    if (isMemoRequired && !memo) {
+      alert('의심 또는 오염 상태는 설명을 반드시 입력해야 합니다.');
+      document.getElementById('modal-edit-memo')?.focus();
+      return;
+    }
+
+    if (!confirm(`수정된 패턴 문구를 저장하시겠습니까?\n\n패턴: "${pattern}"`)) {
+      return;
+    }
+
+    try {
+      const res = await fetch('/mgr/api/cleanroom/text', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: Number(id), pattern_text: pattern, required_terms: currentType === 'SUSPECT' ? requiredTerms : '', memo: memo })
+      });
+      const data = await res.json();
+      if (!data.success) {
+        alert(data.message || '수정에 실패했습니다.');
+        return;
+      }
+
+      const modalEl = document.getElementById('modal-cleanse-edit');
+      if (modalEl && window.bootstrap && window.bootstrap.Modal) {
+        const modal = window.bootstrap.Modal.getInstance(modalEl);
+        if (modal) modal.hide();
+      }
+
+      alert('패턴 문구가 정상 수정되었습니다.');
+      await loadCleanroomData();
+    } catch (err) {
+      alert('수정 통신 중 오류가 발생했습니다: ' + err.message);
+    }
+  }
+
+  // 8. 카드 리스트 간 상태 이동 (DB UPDATE)
+  async function moveCleanseItem(id, targetStatus) {
+    const item = currentCleanroomList.find(x => x.id === id);
+    if (!item) return;
+
+    const pattern = item.pattern_text || '';
+    const targetLabel = targetStatus === 'WAIT' ? '대기' : (targetStatus === 'SUSPECT' ? '의심(AI 검토)' : (targetStatus === 'POLLUTED' ? '오염(차단)' : '예외(허용)'));
+
+    // 이동 시에도 중복 키워드 사전 확인
+    const isDup = currentCleanroomList.some(x => x.id !== Number(id) && (x.pattern_text || '').trim() === pattern.trim());
+    if (isDup) {
+      alert('이미 등록 된 키워드 입니다.');
+      return;
+    }
+
+    const isMemoRequired = (targetStatus === 'SUSPECT' || targetStatus === 'POLLUTED');
+    let memo = (item.memo || '').trim();
+
+    // 의심 또는 오염 상태로 이동 시 설명이 없으면: Electron에서도 100% 동작하는 모달 창을 띄워 설명을 반드시 입력받음
+    if (isMemoRequired && !memo) {
+      document.getElementById('modal-move-id').value = id;
+      document.getElementById('modal-move-target-status').value = targetStatus;
+      document.getElementById('modalMoveTitle').textContent = `[${targetLabel}] 상태로 이동 안내`;
+      document.getElementById('modal-move-alert-msg').textContent = `[${targetLabel}] 상태로 이동하려면 설명(사유)이 반드시 있어야 합니다. 설명을 입력해 주세요.`;
+      document.getElementById('modal-move-pattern-text').textContent = pattern;
+
+      const memoInput = document.getElementById('modal-move-input-memo');
+      memoInput.value = '';
+
+      const modalEl = document.getElementById('modal-cleanse-move');
+      if (modalEl && modalEl.parentNode !== document.body) {
+        document.body.appendChild(modalEl);
+      }
+      if (modalEl && window.bootstrap && window.bootstrap.Modal) {
+        const modal = window.bootstrap.Modal.getOrCreateInstance(modalEl);
+        modal.show();
+        setTimeout(() => memoInput.focus(), 150);
+      }
+      return;
+    }
+
+    // 대기/예외로 이동하거나 이미 설명이 있는 경우 확인창 표시 후 즉시 이동
+    if (!confirm(`이 항목을 [${targetLabel}]로 이동하시겠습니까?\n\n패턴: "${pattern}"`)) {
+      return;
+    }
+
+    await executeMoveCleanseItem(id, targetStatus, memo, targetLabel);
+  }
+
+  // 모달을 통한 이동 및 설명 저장 처리
+  async function submitModalMove() {
+    const id = document.getElementById('modal-move-id')?.value;
+    const targetStatus = document.getElementById('modal-move-target-status')?.value;
+    const memo = document.getElementById('modal-move-input-memo')?.value.trim() || '';
+
+    const targetLabel = targetStatus === 'WAIT' ? '대기' : (targetStatus === 'SUSPECT' ? '의심(AI 검토)' : (targetStatus === 'POLLUTED' ? '오염(차단)' : '예외(허용)'));
+    const isMemoRequired = (targetStatus === 'SUSPECT' || targetStatus === 'POLLUTED');
+
+    if (isMemoRequired && !memo) {
+      alert('설명을 입력하세요.');
+      document.getElementById('modal-move-input-memo')?.focus();
+      return;
+    }
+
+    const modalEl = document.getElementById('modal-cleanse-move');
+    if (modalEl && window.bootstrap && window.bootstrap.Modal) {
+      const modal = window.bootstrap.Modal.getInstance(modalEl);
+      if (modal) modal.hide();
+    }
+
+    await executeMoveCleanseItem(Number(id), targetStatus, memo, targetLabel);
+  }
+
+  // 실제 상태 이동 API 호출 함수
+  async function executeMoveCleanseItem(id, targetStatus, memo, targetLabel) {
+    try {
+      const res = await fetch('/mgr/api/cleanroom/status', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: Number(id), pattern_type: targetStatus, memo: memo })
+      });
+      const data = await res.json();
+      if (!data.success) {
+        alert(data.message || '상태 변경에 실패했습니다.');
+        return;
+      }
+
+      alert(`성공적으로 [${targetLabel}]로 이동되었습니다.`);
+      await loadCleanroomData();
+    } catch (err) {
+      alert('상태 이동 통신 중 오류가 발생했습니다: ' + err.message);
+    }
+  }
+
+  // 9. 카드 영구 삭제 (DB DELETE)
+  async function deleteCleanseItem(id) {
+    const item = currentCleanroomList.find(x => x.id === id);
+    if (!item) return;
+
+    const pattern = item.pattern_text;
+
+    if (!confirm(`이 패턴을 정화소에서 영구 삭제하시겠습니까?\n\n패턴: "${pattern}"`)) {
+      return;
+    }
+
+    try {
+      const res = await fetch('/mgr/api/cleanroom/' + id, {
+        method: 'DELETE'
+      });
+      const data = await res.json();
+      if (!data.success) {
+        alert(data.message || '삭제에 실패했습니다.');
+        return;
+      }
+
+      alert('정상적으로 삭제되었습니다.');
+      await loadCleanroomData();
+    } catch (err) {
+      alert('삭제 통신 중 오류가 발생했습니다: ' + err.message);
+    }
+  }
+
+  function escapeHtml(str) {
+    return String(str || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  // 10. 페이지 초기화 및 URL 파라미터 처리
+  document.addEventListener('DOMContentLoaded', async function () {
+    // 모달들이 app-main의 stacking context에 갇혀 backdrop 뒤로 숨어 폼이 비활성화되는 현상 원천 방지
+    ['modal-cleanse-register', 'modal-cleanse-edit', 'modal-cleanse-move'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el && el.parentNode !== document.body) {
+        document.body.appendChild(el);
+      }
+    });
+
+    await loadCleanroomData();
+
+    // 점검 결과 화면에서 [정화소 이동]으로 넘어온 경우 자동 처리
+    const urlParams = new URLSearchParams(window.location.search);
+    const id = urlParams.get('id');
+    const text = urlParams.get('text');
+    const url = urlParams.get('url');
+
+    if (text) {
+      const trimmedText = text.trim();
+      // URL 주소창에서 파라미터 정리 (새로고침 시 중복 호출 방지)
+      window.history.replaceState({}, document.title, window.location.pathname);
+
+      // 이미 등록된 키워드인지 확인
+      const isDup = currentCleanroomList.some(item => (item.pattern_text || '').trim() === trimmedText);
+      if (isDup) {
+        alert('이미 등록 된 키워드 입니다.');
+        return;
+      }
+
+      if (confirm(`점검 결과에서 수집된 문구를 [대기 리스트]에 신규 등록하시겠습니까?\n\n패턴: "${trimmedText}"`)) {
+        try {
+          const res = await fetch('/mgr/api/cleanroom', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              pattern_type: 'WAIT',
+              pattern_text: trimmedText,
+              source_finding_id: id || null,
+              source_url: url || null,
+              memo: ''
+            })
+          });
+          const data = await res.json();
+          if (data.success) {
+            alert('대기 리스트에 정상 등록되었습니다.');
+            await loadCleanroomData();
+          } else {
+            alert(data.message || '등록에 실패했습니다.');
+          }
+        } catch (e) {
+          console.error(e);
+          alert('등록 통신 중 오류가 발생했습니다: ' + e.message);
+        }
+      }
+    }
+  });
+</script>

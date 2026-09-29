@@ -1,0 +1,158 @@
+/* Pretendard 웹폰트: 파일은 static/css/fonts 디렉터리에 둡니다. */
+@font-face {
+  font-family: "Pretendard";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100;
+  src: url("./fonts/Pretendard-Thin.woff2") format("woff2"),
+       url("./fonts/Pretendard-Thin.woff") format("woff");
+}
+
+@font-face {
+  font-family: "Pretendard";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 200;
+  src: url("./fonts/Pretendard-ExtraLight.woff2") format("woff2"),
+       url("./fonts/Pretendard-ExtraLight.woff") format("woff");
+}
+
+@font-face {
+  font-family: "Pretendard";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 300;
+  src: url("./fonts/Pretendard-Light.woff2") format("woff2"),
+       url("./fonts/Pretendard-Light.woff") format("woff");
+}
+
+@font-face {
+  font-family: "Pretendard";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url("./fonts/Pretendard-Regular.woff2") format("woff2"),
+       url("./fonts/Pretendard-Regular.woff") format("woff");
+}
+
+@font-face {
+  font-family: "Pretendard";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url("./fonts/Pretendard-Medium.woff2") format("woff2"),
+       url("./fonts/Pretendard-Medium.woff") format("woff");
+}
+
+@font-face {
+  font-family: "Pretendard";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 600;
+  src: url("./fonts/Pretendard-SemiBold.woff2") format("woff2"),
+       url("./fonts/Pretendard-SemiBold.woff") format("woff");
+}
+
+@font-face {
+  font-family: "Pretendard";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url("./fonts/Pretendard-Bold.woff2") format("woff2"),
+       url("./fonts/Pretendard-Bold.woff") format("woff");
+}
+
+@font-face {
+  font-family: "Pretendard";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 800;
+  src: url("./fonts/Pretendard-ExtraBold.woff2") format("woff2"),
+       url("./fonts/Pretendard-ExtraBold.woff") format("woff");
+}
+
+@font-face {
+  font-family: "Pretendard";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 900;
+  src: url("./fonts/Pretendard-Black.woff2") format("woff2"),
+       url("./fonts/Pretendard-Black.woff") format("woff");
+}
+
+/* Bootstrap과 AdminLTE를 포함한 전체 화면에 동일한 글꼴을 적용합니다. */
+:root {
+  --fcms-font-sans-serif: "Pretendard", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, "Noto Sans KR", "Helvetica Neue", Arial, sans-serif;
+  --bs-font-sans-serif: var(--fcms-font-sans-serif) !important;
+  --bs-body-font-family: var(--fcms-font-sans-serif) !important;
+}
+
+body,
+button,
+input,
+select,
+textarea {
+  font-family: var(--fcms-font-sans-serif);
+}
+
+/* 다중 페이지 방식은 유지하면서 화면 이동을 앱처럼 자연스럽게 연결합니다. */
+@view-transition {
+  navigation: auto;
+}
+
+.app-header {
+  view-transition-name: fcms-app-header;
+}
+
+.app-sidebar {
+  view-transition-name: fcms-app-sidebar;
+}
+
+.app-main {
+  view-transition-name: fcms-app-main;
+}
+
+.app-footer {
+  view-transition-name: fcms-app-footer;
+}
+
+::view-transition-old(root),
+::view-transition-old(fcms-app-main) {
+  animation: fcms-page-fade-out 90ms ease-in both;
+}
+
+::view-transition-new(root),
+::view-transition-new(fcms-app-main) {
+  animation: fcms-page-fade-in 180ms ease-out both;
+}
+
+::view-transition-old(fcms-app-header),
+::view-transition-new(fcms-app-header),
+::view-transition-old(fcms-app-sidebar),
+::view-transition-new(fcms-app-sidebar),
+::view-transition-old(fcms-app-footer),
+::view-transition-new(fcms-app-footer) {
+  animation-duration: 120ms;
+  animation-timing-function: ease-out;
+}
+
+@keyframes fcms-page-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes fcms-page-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation-duration: 0.01ms !important;
+  }
+}

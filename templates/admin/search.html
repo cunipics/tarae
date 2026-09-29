@@ -1,0 +1,455 @@
+<style>
+  /* 돋보기 자체는 회전하지 않고, 좌하단에서 우상단으로 부드러운 작은 타원 궤적을 그리며 스캔 이동 */
+  @keyframes scan-oval {
+    0% {
+      transform: translate(-7px, 6px);
+    }
+    25% {
+      transform: translate(2px, 4px);
+    }
+    50% {
+      transform: translate(7px, -6px);
+    }
+    75% {
+      transform: translate(-2px, -4px);
+    }
+    100% {
+      transform: translate(-7px, 6px);
+    }
+  }
+  .scan-anim, .spin-anim {
+    display: inline-block !important;
+    animation: scan-oval 2.4s ease-in-out infinite;
+    will-change: transform;
+  }
+  #live-browser-resizer-top:hover, #live-browser-resizer-bottom:hover {
+    background: rgba(13, 110, 253, 0.4) !important;
+    transition: background 0.15s ease;
+  }
+  /* khan4019/tree-grid-directive 스타일 매핑 */
+  .tree-grid tbody tr td:first-child {
+    white-space: nowrap;
+  }
+  .tree-grid .tree-icon {
+    display: inline-block;
+    width: 1.25rem;
+    text-align: center;
+    cursor: pointer;
+    user-select: none;
+    margin-right: 0.35rem;
+    color: #0d6efd;
+  }
+  .tree-grid .tree-label {
+    font-weight: 500;
+  }
+  .tree-grid .level-0 td:first-child { padding-left: 0.75rem !important; }
+  .tree-grid .level-1 td:first-child { padding-left: 2rem !important; }
+  .tree-grid .level-2 td:first-child { padding-left: 3.25rem !important; }
+  .tree-grid .level-3 td:first-child { padding-left: 4.5rem !important; }
+  .tree-grid tr.tree-collapsed { display: none; }
+  .fcms-solution-panel[hidden] { display: none !important; }
+  .fcms-solution-code { width: 100%; min-height: 5.75rem; resize: vertical; white-space: pre; overflow: auto; font-size: .76rem; line-height: 1.5; }
+  .fcms-solution-code:focus { background-color: var(--bs-dark); color: var(--bs-light); }
+  .fcms-solution-toggle .fcms-solution-chevron { display: inline-block; transition: transform .2s ease; }
+  .fcms-solution-toggle[aria-expanded="true"] .fcms-solution-chevron { transform: rotate(180deg); }
+  /* 긴 URL 자동 말줄임 (...) 처리 */
+  .tree-grid .tree-node-link {
+    display: inline-block;
+    max-width: 380px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+  @media (max-width: 1400px) {
+    .tree-grid .tree-node-link {
+      max-width: 280px;
+    }
+  }
+</style>
+
+<!--begin::App Content Header-->
+<div class="app-content-header">
+  <div class="container-fluid">
+    <div class="row">
+      <div class="col-sm-6">
+        <h1 class="mb-0 fs-3">탐지 수행</h1>
+      </div>
+      <div class="col-sm-6">
+        <nav aria-label="breadcrumb">
+          <ol class="breadcrumb float-sm-end">
+            <li class="breadcrumb-item"><a href="/mgr/index">홈</a></li>
+            <li class="breadcrumb-item active" aria-current="page">탐지 수행</li>
+          </ol>
+        </nav>
+      </div>
+    </div>
+  </div>
+</div>
+<!--end::App Content Header-->
+
+<!--begin::App Content-->
+<div class="app-content">
+  <div class="container-fluid">
+    <div class="row g-4">
+      <!--begin::Results Main Area-->
+      <div class="col-lg-8">
+        <!--begin::URL Input Form-->
+        <form class="mb-3" id="form-detect" onsubmit="return false;">
+          <label for="detect-url-input" class="visually-hidden"> 점검 대상 URL </label>
+          <div class="input-group input-group-lg shadow-sm">
+            <span class="input-group-text bg-body-tertiary">
+              <i class="bi bi-globe2 text-primary"></i>
+            </span>
+            <input
+              type="url"
+              id="detect-url-input"
+              name="url"
+              class="form-control"
+              placeholder="https://"
+              value=""
+              autocomplete="off"
+              required
+            />
+            <button class="btn btn-primary px-4 fw-semibold shadow-sm" type="button" id="btn-start-detect">
+              <i class="bi bi-shield-check me-1" aria-hidden="true"></i>
+              탐지 시작
+            </button>
+          </div>
+        </form>
+        <!--end::URL Input Form-->
+
+        <!--begin::점검 옵션 바 (속도 지연시간 조절 및 최대 페이지 수)-->
+        <div class="d-flex flex-wrap align-items-center justify-content-between mb-3 px-1 gap-2">
+          <div class="form-text text-muted mb-0" id="url-validation-feedback">
+            점검을 시작할 공공 웹사이트의 전체 주소(https://...)를 입력해 주세요.
+          </div>
+          <div class="d-flex align-items-center gap-2">
+            <div class="input-group input-group-sm" style="width: auto;">
+              <span class="input-group-text bg-light text-secondary">
+                <i class="bi bi-speedometer2 me-1"></i>속도(지연)
+              </span>
+              <select class="form-select form-select-sm" id="select-speed-delay" style="cursor: pointer; min-width: 170px;" title="대상 웹서버 차단 방지 지연시간">
+                <option value="500" selected>표준 (0.5초 딜레이)</option>
+                <option value="200">고속 (0.2초 딜레이)</option>
+                <option value="1000">안전 (1.0초 딜레이 - 차단방지)</option>
+                <option value="2000">정밀 (2.0초 딜레이 - 강력보호)</option>
+              </select>
+            </div>
+            <div class="input-group input-group-sm" style="width: auto;">
+              <span class="input-group-text bg-light text-secondary">
+                <i class="bi bi-clock-history me-1"></i>점검 시간
+              </span>
+              <select class="form-select form-select-sm" id="select-max-time" style="cursor: pointer; min-width: 160px;" title="지정된 시간 동안 깊이 있게 탐색합니다">
+                <option value="300">5분 (간이 탐색)</option>
+                <option value="600">10분 (표준 탐색)</option>
+                <option value="900">15분 (정밀 탐색)</option>
+                <option value="1800" selected>30분 (기본 권장 - 심층 탐색)</option>
+                <option value="3600">60분 (1시간 - 전수 심층 탐색)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <!--end::점검 옵션 바-->
+
+        <!--begin::Summary Bar-->
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <p class="text-body-secondary mb-0" id="detect-summary-text" aria-live="polite">
+            총 <strong id="summary-violation-cnt" class="text-danger">0</strong>건의 불법광고 검출 &middot;
+            소요시간 <strong id="summary-elapsed-time">0</strong>초
+          </p>
+          <div class="d-flex gap-2">
+            <button type="button" class="btn btn-outline-success btn-sm" id="btn-export-json">
+              <i class="bi bi-filetype-json me-1"></i>
+              결과 파일 확인/저장
+            </button>
+          </div>
+        </div>
+        <!--end::Summary Bar-->
+
+        <!--begin::Result List Card-->
+        <div class="card shadow-sm mb-4">
+          <!--begin::Type Tabs (한글 위주 명칭)-->
+          <div class="card-header p-0 pt-1">
+            <ul class="nav nav-tabs px-3" role="tablist" id="detect-type-tabs">
+              <li class="nav-item" role="presentation">
+                <button class="nav-link active fw-semibold" type="button" data-type="ALL">
+                  전체
+                  <span class="badge text-bg-secondary ms-1" id="tab-cnt-ALL">0</span>
+                </button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link fw-semibold" type="button" data-type="JAMO">
+                  자모 분해
+                  <span class="badge text-bg-danger ms-1" id="tab-cnt-JAMO">0</span>
+                </button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link fw-semibold" type="button" data-type="HOMOGLYPH">
+                  닮은꼴 글자
+                  <span class="badge text-bg-danger ms-1" id="tab-cnt-HOMOGLYPH">0</span>
+                </button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link fw-semibold" type="button" data-type="TRANSPARENT">
+                  투명 텍스트
+                  <span class="badge text-bg-warning ms-1" id="tab-cnt-TRANSPARENT">0</span>
+                </button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link fw-semibold" type="button" data-type="OFFSCREEN">
+                  화면 밖 은닉
+                  <span class="badge text-bg-warning ms-1" id="tab-cnt-OFFSCREEN">0</span>
+                </button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link fw-semibold" type="button" data-type="ETC">
+                  추가 탐지
+                  <span class="badge text-bg-info ms-1" id="tab-cnt-ETC">0</span>
+                </button>
+              </li>
+            </ul>
+          </div>
+          <!--end::Type Tabs-->
+
+          <!--begin::선택된 URL 위반 항목 필터 배너-->
+          <div id="url-filter-banner" class="d-none bg-danger-subtle border-bottom border-danger-subtle px-3 py-2 d-flex align-items-center justify-content-between small">
+            <div class="text-danger fw-semibold text-truncate me-2">
+              <i class="bi bi-funnel-fill me-1"></i><span id="url-filter-label">선택한 페이지의 위반 내역 필터링 중</span>
+            </div>
+            <button type="button" class="btn btn-outline-danger btn-sm py-0 px-2 fs-7 fw-bold" id="btn-clear-url-filter">
+              <i class="bi bi-x-circle me-1"></i>전체보기
+            </button>
+          </div>
+          <!--end::선택된 URL 위반 항목 필터 배너-->
+
+          <!--begin::Findings List Body-->
+          <div class="card-body p-0">
+            <ul class="list-group list-group-flush" id="finding-list-container">
+              <!-- 기본 안내 상태 -->
+              <li class="list-group-item py-5 text-center text-muted" id="list-empty-placeholder">
+                <i class="bi bi-shield-slash fs-1 d-block mb-2 text-secondary"></i>
+                <p class="fw-semibold mb-1">검출된 불법광고 내역이 없습니다.</p>
+                <small class="text-secondary">상단에 탐지 대상 URL을 입력하고 [탐지 시작]을 눌러주세요.</small>
+              </li>
+            </ul>
+          </div>
+          <!--end::Findings List Body-->
+        </div>
+        <!--end::Result List Card-->
+
+        <!--begin::탐색 URL 계층 구조 Tree Grid (khan4019/tree-grid-directive 스타일)-->
+        <div class="card shadow-sm mb-4" id="card-site-tree">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <div class="card-title mb-0 fs-6 fw-bold">
+              <i class="bi bi-diagram-3 me-1 text-primary"></i>
+              탐색 URL 계층 구조 (Tree Grid)
+            </div>
+            <span class="badge text-bg-primary" id="tree-total-badge">0개 URL</span>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-responsive">
+              <table class="table table-hover table-striped tree-grid mb-0 align-middle">
+                <thead class="table-light">
+                  <tr>
+                    <th style="min-width: 280px;">Name (URL 경로)</th>
+                    <th style="min-width: 200px;">Description (페이지 설명)</th>
+                    <th style="width: 100px;">Status</th>
+                    <th style="width: 110px;">Violation</th>
+                    <th style="width: 120px;">Technique</th>
+                  </tr>
+                </thead>
+                <tbody id="tree-grid-body">
+                  <tr id="tree-grid-empty">
+                    <td colspan="5" class="text-center py-5 text-muted">
+                      <i class="bi bi-diagram-2 d-block fs-2 text-secondary mb-2"></i>
+                      <p class="fw-semibold mb-1">수집된 웹페이지 계층 정보가 없습니다.</p>
+                      <small class="text-secondary">상단에 URL을 입력하고 [점검 시작]을 누르면 계층 구조가 실시간 생성됩니다.</small>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <!--end::탐색 URL 계층 구조 Tree Grid-->
+      </div>
+      <!--end::Results Main Area-->
+
+      <!--begin::Sidebar-->
+      <div class="col-lg-4">
+        <!--begin::검색 진행 상태 카드 (실시간 점검 상태)-->
+        <div class="card mb-4" id="card-detect-status">
+          <div class="card-header">
+            <div class="card-title">검색 진행 상태</div>
+          </div>
+          <div class="card-body text-center py-4 d-flex flex-column justify-content-center" style="min-height: 220px;">
+            <div class="mb-2" style="height: 48px; display: flex; align-items: center; justify-content: center;">
+              <i class="bi bi-search fs-1 text-secondary" id="icon-detect-spin" aria-hidden="true"></i>
+            </div>
+            <p class="fw-semibold mb-1 text-truncate px-2 mx-auto" id="text-current-url" style="max-width: 100%; height: 1.5rem; line-height: 1.5rem;" title="이곳에 검색중인 URL이 표시됩니다.">이곳에 검색중인 URL이 표시됩니다.</p>
+            <p class="text-secondary fs-7 mb-3 text-truncate px-2 mx-auto" id="text-current-step" style="max-width: 100%; height: 1.35rem; line-height: 1.35rem;" title="이곳에 검색중인 광고기법이 표시됩니다.">
+              이곳에 검색중인 광고기법이 표시됩니다.
+            </p>
+            <!--begin::탐지 계획 수립 및 검출 진행 프로세스바-->
+            <div id="detect-progress-wrapper" class="w-100 px-3 mb-3 d-none">
+              <div class="d-flex justify-content-between align-items-center mb-1 small">
+                <span id="detect-progress-label" class="fw-semibold text-primary">탐지 계획 수립 중...</span>
+                <span id="detect-progress-pct" class="text-muted font-monospace">0%</span>
+              </div>
+              <div class="progress" style="height: 8px;">
+                <div id="detect-progress-bar" class="progress-bar progress-bar-striped progress-bar-animated bg-primary" role="progressbar" style="width: 0%;"></div>
+              </div>
+            </div>
+            <!--end::탐지 계획 수립 및 검출 진행 프로세스바-->
+            <div>
+              <button type="button" class="btn btn-sm btn-outline-danger px-3 d-none" id="btn-toggle-detect" disabled>
+                <span id="text-btn-toggle">점검 중지</span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <!--end::검색 진행 상태 카드-->
+
+        <!--begin::키워드 필터링 카드-->
+        <div class="card mb-4 bg-body">
+          <div class="card-header">
+            <div class="card-title fw-bold">키워드</div>
+          </div>
+          <div class="card-body">
+            <!-- 오염 단어로 지정 -->
+            <div class="mb-3">
+              <label for="input-temp-polluted" class="form-label fw-semibold">오염 단어로 지정</label>
+              <input type="text" class="form-control form-control-sm" id="input-temp-polluted" placeholder="단어 입력 후 Enter" autocomplete="off" />
+              <div class="form-text text-muted" style="font-size: 0.75rem;">오염 단어로 강제 지정하여 즉시 검출</div>
+              <div id="list-temp-polluted" class="d-flex flex-wrap gap-1 mt-2"></div>
+            </div>
+
+            <hr class="my-3 text-muted opacity-25" />
+
+            <!-- 오염 단어 건너뛰기 -->
+            <div class="mb-2">
+              <label for="input-temp-allowed" class="form-label fw-semibold">오염 단어 건너뛰기</label>
+              <input type="text" class="form-control form-control-sm" id="input-temp-allowed" placeholder="단어 입력 후 Enter" autocomplete="off" />
+              <div class="form-text text-muted" style="font-size: 0.75rem;">오염 단어라도 이번 검사에서 스킵</div>
+              <div id="list-temp-allowed" class="d-flex flex-wrap gap-1 mt-2"></div>
+            </div>
+          </div>
+        </div>
+        <!--end::키워드 필터링 카드-->
+
+
+      </div>
+      <!--end::Sidebar-->
+    </div>
+    <!--end::Row-->
+  </div>
+  <!--end::Container-->
+</div>
+<!--end::App Content-->
+
+
+
+<!--begin::실시간 점검 브라우저 팝업 레이어 (PC 규격 1200px 대화면 및 상하 리사이즈/드래그 지원)-->
+<div id="live-browser-overlay" class="d-none shadow-lg border rounded-3 bg-white" style="position: fixed; right: 20px; bottom: 20px; width: 1200px; max-width: 95vw; height: 720px; max-height: 88vh; min-width: 768px; min-height: 250px; z-index: 1050; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 10px 35px rgba(0,0,0,0.3)!important;">
+  <!-- 상단 상하 리사이즈 핸들 바 -->
+  <div id="live-browser-resizer-top" style="position: absolute; top: 0; left: 0; right: 0; height: 8px; cursor: ns-resize; z-index: 1060; background: transparent;" title="상하 높이 조절 (마우스로 드래그)"></div>
+  <!-- 헤더 (마우스 드래그로 창 위치 이동) -->
+  <div class="d-flex align-items-center justify-content-between px-3 py-2 bg-dark text-white user-select-none" style="cursor: move;" id="live-browser-header">
+    <div class="d-flex align-items-center gap-2 overflow-hidden me-2">
+      <span class="spinner-grow spinner-grow-sm text-success flex-shrink-0" id="live-browser-pulse" role="status" style="width: 0.75rem; height: 0.75rem;"></span>
+      <strong class="small text-truncate" id="live-browser-title">실시간 점검 브라우저 (PC 규격 뷰어)</strong>
+      <span class="badge bg-secondary font-monospace small px-2 py-0" id="live-browser-badge">LIVE</span>
+    </div>
+    <div class="d-flex align-items-center gap-1">
+      <button type="button" class="btn btn-sm btn-outline-secondary text-white py-0 px-1" id="btn-live-browser-min" title="최소화/복원">
+        <i class="bi bi-dash-lg"></i>
+      </button>
+      <button type="button" class="btn btn-sm btn-outline-secondary text-white py-0 px-1" id="btn-live-browser-expand" title="전체화면/기본크기">
+        <i class="bi bi-arrows-angle-expand"></i>
+      </button>
+      <button type="button" class="btn btn-sm btn-outline-secondary text-white py-0 px-1" id="btn-live-browser-close" title="닫기">
+        <i class="bi bi-x-lg"></i>
+      </button>
+    </div>
+  </div>
+  <!-- URL 주소창 안내 -->
+  <div class="d-flex align-items-center bg-light border-bottom px-3 py-1 gap-2 small text-muted font-monospace">
+    <i class="bi bi-globe2 text-primary"></i>
+    <span class="text-truncate flex-grow-1" id="live-browser-url">연결 대기 중...</span>
+  </div>
+  <!-- 실제 웹페이지 뷰어 (Electron webview & iframe 호환) -->
+  <div class="flex-grow-1 position-relative bg-white" id="live-browser-body" style="min-height: 0;">
+    <webview id="live-browser-webview" src="about:blank" partition="persist:fcms-live-browser" style="width: 100%; height: 100%; border: none;" preload="<%= typeof webviewPreloadPath !== 'undefined' ? ('file:///' + webviewPreloadPath.replace(/\\/g, '/')) : '' %>" sandbox="allow-scripts allow-same-origin allow-forms allow-downloads"></webview>
+    <iframe id="live-browser-iframe" src="about:blank" style="width: 100%; height: 100%; border: none; display: none;" referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
+    <div id="live-browser-loading" class="position-absolute top-0 start-0 w-100 h-100 bg-white bg-opacity-75 d-flex flex-column align-items-center justify-content-center d-none">
+      <div class="spinner-border text-primary mb-2" role="status" style="width: 2rem; height: 2rem;"></div>
+      <span class="small text-muted fw-semibold" id="live-browser-loading-text">웹페이지 분석 중...</span>
+    </div>
+  </div>
+  <!-- 하단 상하 리사이즈 핸들 바 -->
+  <div id="live-browser-resizer-bottom" style="position: absolute; bottom: 0; left: 0; right: 0; height: 8px; cursor: ns-resize; z-index: 1060; background: transparent;" title="상하 높이 조절 (마우스로 드래그)"></div>
+</div>
+<!--end::실시간 점검 브라우저 팝업 레이어-->
+
+<!--begin::result.json 확인 및 저장 모달 레이어-->
+<div class="modal fade" id="modal-result-json" tabindex="-1" aria-labelledby="modal-result-json-title" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content shadow">
+      <div class="modal-header bg-light">
+        <h5 class="modal-title fs-6 fw-bold text-dark" id="modal-result-json-title">
+          <i class="bi bi-filetype-json text-primary me-2"></i>점검 결과 파일 확인 및 저장
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="닫기"></button>
+      </div>
+      <div class="modal-body p-3">
+        <!-- 파일 생성 경로 및 상태 안내 -->
+        <div class="p-3 mb-3 bg-light rounded border">
+          <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <div>
+              <div class="small fw-bold text-secondary mb-1">
+                <i class="bi bi-folder-check me-1 text-success"></i>결과 출처:
+                <code class="text-dark bg-white px-2 py-1 rounded border font-monospace" id="modal-result-json-path">점검 이력 확인 중</code>
+              </div>
+              <div class="small text-muted" id="modal-result-json-meta">
+                생성 일시: 확인 중... | 파일 크기: 확인 중...
+              </div>
+            </div>
+            <button type="button" class="btn btn-outline-secondary btn-sm d-none" id="btn-modal-open-folder" title="Windows 탐색기에서 파일 위치 열기">
+              <i class="bi bi-folder2-open me-1"></i>저장 폴더 열기
+            </button>
+          </div>
+        </div>
+
+        <div class="btn-group btn-group-sm mb-2" role="group" aria-label="결과 파일 선택">
+          <button type="button" class="btn btn-outline-primary" id="btn-modal-result-main">result.json</button>
+          <button type="button" class="btn btn-outline-primary" id="btn-modal-result-extra">result_extra.json</button>
+        </div>
+        <!-- JSON 데이터 프리뷰 박스 -->
+        <div class="position-relative">
+          <div class="d-flex justify-content-between align-items-center mb-1">
+            <span class="small fw-semibold text-secondary">
+              <i class="bi bi-code-square me-1"></i>JSON 내용 미리보기
+            </span>
+            <button type="button" class="btn btn-sm btn-outline-primary py-0 px-2 fs-7" id="btn-modal-copy-json">
+              <i class="bi bi-clipboard me-1"></i>전체 복사
+            </button>
+          </div>
+          <pre id="modal-result-json-code" class="bg-dark text-light p-3 rounded font-monospace small mb-0" style="max-height: 380px; overflow: auto; user-select: text; white-space: pre-wrap; word-break: break-all;">데이터를 불러오는 중입니다...</pre>
+        </div>
+      </div>
+      <div class="modal-footer bg-light py-2">
+        <span class="small me-auto" id="modal-result-json-save-status" role="status"></span>
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">닫기</button>
+        <button type="button" class="btn btn-primary btn-sm" id="btn-modal-save-file">
+          <i class="bi bi-download me-1"></i>파일로 저장 (다운로드)
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+<!--end::result.json 확인 및 저장 모달 레이어-->
+<script src="/js/detect-solution.js"></script>
+<script src="/js/result-json-save.js"></script>
+<script src="/js/detect-manager.js"></script>
+<!--end::탐지 관리자 프론트엔드 스크립트-->

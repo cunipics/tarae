@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="loginMapper">
+	
+	<select id="selectAdminLogin">
+		SELECT a.*, u_passwd as passwd
+		FROM t_user a
+		WHERE u_id = #{userid}
+	</select>	
+	<update id="updateLoginTime">
+		UPDATE t_user 
+		SET u_login_dt = datetime('now', 'localtime'), u_err_dt = NULL, u_err_cnt = 0, u_status = 'A' 
+		WHERE u_id = #{userid}
+	</update>	
+	<update id="updateLoginFail">
+		UPDATE t_user 
+		SET u_err_dt = datetime('now', 'localtime'), u_err_cnt = u_err_cnt + 1, u_status = CASE WHEN u_err_cnt >= 5 THEN 'B' ELSE 'A' END 
+		WHERE u_id = #{userid}
+	</update>	
+
+	<insert id="insertUserLog">
+		INSERT INTO t_home_log (
+			HTTP_HOST, HTTP_CONNECTION, HTTP_USER_AGENT, HTTP_REFERER, HTTP_ACCEPT, HTTP_ACCEPT_LANGUAGE,
+			REMOTE_ADDR, SCRIPT_FILENAME, REMOTE_PORT, GATEWAY_INTERFACE, SERVER_PROTOCOL, REQUEST_METHOD,
+			QUERY_STRING, REQUEST_URI, SCRIPT_NAME, PHP_SELF, REGDATE, USERID,
+			url, referer, ip, user_agent, language, uid, enr_dt
+		)
+		VALUES (
+			#{HTTP_HOST}, #{HTTP_CONNECTION}, #{HTTP_USER_AGENT}, #{HTTP_REFERER}, #{HTTP_ACCEPT}, #{HTTP_ACCEPT_LANGUAGE},
+			#{REMOTE_ADDR}, #{SCRIPT_FILENAME}, #{REMOTE_PORT}, #{GATEWAY_INTERFACE}, #{SERVER_PROTOCOL}, #{REQUEST_METHOD},
+			#{QUERY_STRING}, #{REQUEST_URI}, #{SCRIPT_NAME}, #{PHP_SELF}, datetime('now', 'localtime'), #{USERID},
+			#{REQUEST_URI}, #{HTTP_REFERER}, #{REMOTE_ADDR}, #{HTTP_USER_AGENT}, #{HTTP_ACCEPT_LANGUAGE}, #{USERID}, datetime('now', 'localtime')
+		)
+	</insert>	
+
+	<sql id="userRef">
+		WHERE 1=1
+		<choose>
+			<when test="smode != null and smode != '' and smode == 'I'">
+				<if test="search != null and search != ''"> AND u_id LIKE '%' || #{search} || '%' </if>
+			</when>				
+			<when test="smode != null and smode != '' and smode == 'N'">
+				<if test="search != null and search != ''"> AND u_name LIKE '%' || #{search} || '%' </if>
+			</when>
+		</choose>		
+		<if test="uId != null and uId != ''">
+			AND u_id = #{uId}
+		</if>			
+		<if test="uPasswd != null and uPasswd != ''">
+			AND u_status IN ('A', 'P')
+		</if>
+	</sql>	
+	<select id="selectUserList_PAGE">
+		SELECT ${pageNo} PAGENO, TOTAL, PAGES, STARTPAGE, CASE WHEN ENDPAGE > PAGES THEN PAGES ELSE ENDPAGE END ENDPAGE FROM (
+			SELECT TOTAL, 
+				CASE WHEN TOTAL = 0 THEN 0 ELSE ((TOTAL + ROWCOUNT - 1) / ROWCOUNT) END PAGES,
+				(((PAGE - 1) / STEP) * STEP + 1) STARTPAGE,
+				(((PAGE - 1) / STEP + 1) * STEP) ENDPAGE FROM (
+				SELECT COUNT(*) TOTAL, ${pageNo} PAGE, ${ViewRow} ROWCOUNT, ${ViewPage} STEP
+				FROM t_user <include refid="userRef" />				
+			) A2
+		) A1
+	</select>
+	<select id="selectUserList">
+		SELECT *,
+			(SELECT sc_name FROM t_system_code WHERE sc_cd = u_auth AND sc_pcd = '0002') u_auth_nm,
+			(SELECT sc_name FROM t_system_code WHERE sc_cd = u_status AND sc_pcd = '0001') u_status_nm
+		FROM t_user
+		<include refid="userRef" />
+		ORDER BY u_enr_dt DESC
+		<if test="limit != null and limit != ''">
+		LIMIT ${ViewRow} OFFSET ${limit}
+		</if>	
+	</select>
+	<insert id="insertUser">
+		INSERT INTO t_user (u_id, u_name, u_passwd, u_mobile, u_email, u_status, u_dept, u_auth, u_site, u_cud)
+		VALUES (#{uId}, #{uName}, #{uPasswd}, #{uMobile}, #{uEmail}, #{uStatus}, #{uDept}, #{uAuth}, #{uSite}, #{uCud})
+	</insert>
+	<update id="updateUser">
+		UPDATE t_user SET
+			<if test="uPasswd != null and uPasswd != ''">u_passwd = #{uPasswd},</if>
+			<if test="uStatus == 'A'">u_status = #{uStatus}, u_err_cnt = 0, u_err_dt = NULL,</if>
+			<if test="uStatus != 'A'">u_status = #{uStatus},</if>
+			u_name = #{uName}, u_mobile = #{uMobile}, u_email = #{uEmail}, u_dept = #{uDept}, u_auth = #{uAuth}, u_site = #{uSite},
+			u_cud = #{uCud}
+		WHERE u_id = #{uId}
+	</update>
+	<update id="updateUser2">
+		UPDATE t_user SET
+			<if test="uPasswd != null and uPasswd != ''">u_passwd = #{uPasswd},</if>
+			u_mobile = #{uMobile2}, u_email = #{uEmail2}, u_dept = #{uDept2}
+		WHERE u_id = #{uId}
+	</update>	
+	<update id="updateUserStatus">
+		UPDATE t_user SET u_status = #{uStatus} WHERE u_id = #{uId}
+	</update>
+
+</mapper>

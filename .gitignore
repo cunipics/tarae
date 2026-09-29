@@ -1,0 +1,9 @@
+.env
+node_modules/
+logs/
+output/
+*.db
+*.db-wal
+*.db-shm
+*.log
+sql/schema.sql

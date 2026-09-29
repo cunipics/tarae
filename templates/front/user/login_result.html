@@ -1,0 +1,13 @@
+<section>
+  <h1><%= __('login_result') %></h1>
+
+  <%- include('../../partials/messages') %>
+
+  <% if (user) { %>
+    <p><%= __('hello') %> <strong><%= user.display_name %></strong></p>
+    <p>Role: <%= user.role %></p>
+    <p>Language: <%= user.lang %></p>
+  <% } else { %>
+    <p><%= __('login_failed') %></p>
+  <% } %>
+</section>
