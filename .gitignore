@@ -1,9 +1,32 @@
+# Local secrets
 .env
+.env.*
+!.env.example
+
+# Installed packages
 node_modules/
+
+# Local databases
+*.db
+*.db-shm
+*.db-wal
+
+# Generated files
 logs/
 output/
-*.db
-*.db-wal
-*.db-shm
-*.log
-sql/schema.sql
+dist/
+build/
+result.json
+result_extra.json
+scratch/
+scratchpad/
+scratch_*.html
+*.txt
+
+# Local agent work files
+.agent/
+.agents/
+.codex/
+
+# Held back from publication
+t_schema.sql
