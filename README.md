@@ -21,6 +21,28 @@ Tarae 화면
 
 AI 분석은 문장 유사도 확인, 번역, 텍스트 분류 순서로 진행됩니다. 모델은 설치 파일에 넣지 않으며, AI 기능을 처음 사용할 때 내려받아 사용자 폴더에 보관합니다.
 
+## 화면
+
+### 로그인
+
+![Tarae 로그인 화면](docs/login.png)
+
+### 대시보드
+
+![Tarae 대시보드](docs/dashboard.png)
+
+### 탐지
+
+![Tarae 탐지 화면](docs/search.png)
+
+### 벡터화된 스팸 패턴 관리
+
+![Tarae 벡터화된 스팸 패턴 관리 화면](docs/defense.png)
+
+### 환경설정
+
+![Tarae 환경설정 화면](docs/setting.png)
+
 ## 설치와 환경 설정
 
 ```powershell
