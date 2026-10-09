@@ -25,6 +25,71 @@ function getSpamTrainStatus() {
 }
 
 /**
+ * 스팸 패턴 한 건을 현재 유사도 모델로 벡터화하여 DB와 메모리에 즉시 등록합니다.
+ */
+async function registerSingleSpamPattern(inputText) {
+  const spamText = String(inputText || '').trim();
+
+  if (spamText.length < 2) {
+    return { success: false, code: 'INVALID_TEXT', message: '두 글자 이상의 패턴을 입력해 주세요.' };
+  }
+  if (spamText.length > 2000) {
+    return { success: false, code: 'TEXT_TOO_LONG', message: '패턴은 2,000자 이내로 입력해 주세요.' };
+  }
+
+  const existCheck = await commonDAO.selectList('spamMapper.selectSpamByText', { spam_text: spamText });
+  if (!existCheck || !existCheck.ok) {
+    throw new Error((existCheck && existCheck.error && existCheck.error.message) || '중복 패턴 확인에 실패했습니다.');
+  }
+  if (existCheck.list.length > 0) {
+    return { success: false, code: 'DUPLICATE', message: '이미 등록된 스팸 패턴입니다.' };
+  }
+
+  const modelStatus = llmPipelineService.getStatus();
+  if (!modelStatus.loadedModels || !modelStatus.loadedModels.similarity) {
+    return {
+      success: false,
+      code: 'MODEL_NOT_READY',
+      message: 'AI 유사도 모델이 아직 준비되지 않았습니다. 모델 준비 완료 후 다시 등록해 주세요.'
+    };
+  }
+
+  const vector = await llmPipelineService.generateEmbedding(spamText);
+  if (!Array.isArray(vector) || vector.length === 0) {
+    throw new Error('패턴 벡터 생성에 실패했습니다.');
+  }
+
+  const insertResult = await commonDAO.execute_query('spamMapper.insertSpam', {
+    spam_text: spamText,
+    category: 'SPAM',
+    vector_json: JSON.stringify(vector),
+    memo: '개별 등록'
+  });
+
+  if (!insertResult || !insertResult.ok) {
+    throw new Error((insertResult && insertResult.error && insertResult.error.message) || '스팸 패턴 저장에 실패했습니다.');
+  }
+  if (!insertResult.info || Number(insertResult.info.changes) !== 1) {
+    return { success: false, code: 'DUPLICATE', message: '이미 등록된 스팸 패턴입니다.' };
+  }
+
+  const newId = Number(insertResult.info.insertId);
+  llmPipelineService.addSpamVectorsToMemory({
+    id: newId,
+    text: spamText,
+    vector
+  });
+
+  return {
+    success: true,
+    id: newId,
+    vectorSize: vector.length,
+    modelName: modelStatus.modelsConfig.similarity,
+    memoryCount: llmPipelineService.getSpamVectorCount()
+  };
+}
+
+/**
  * 백그라운드 스팸 학습 작업 시작
  */
 async function startBackgroundSpamTrain(dataRows, colInfo) {
@@ -167,5 +232,6 @@ async function startBackgroundSpamTrain(dataRows, colInfo) {
 
 module.exports = {
   getSpamTrainStatus,
-  startBackgroundSpamTrain
+  startBackgroundSpamTrain,
+  registerSingleSpamPattern
 };

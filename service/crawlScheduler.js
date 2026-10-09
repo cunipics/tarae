@@ -111,6 +111,18 @@ function planBoardSampling(totalPages, visitBudget) {
   };
 }
 
+function getBoardPriorityWeight(isExposedIndex, hasAuthoringControl) {
+  if (isExposedIndex && hasAuthoringControl) return 2.5;
+  if (isExposedIndex || hasAuthoringControl) return 2;
+  return 1;
+}
+
+function applyBoardPriorityWeight(baseBudget, weight) {
+  const base = Math.max(1, Math.floor(Number(baseBudget) || 1));
+  const safeWeight = Math.min(2.5, Math.max(1, Number(weight) || 1));
+  return Math.max(base, Math.floor(base * safeWeight));
+}
+
 function partitionInOrder(items, primaryLimit) {
   const values = Array.isArray(items) ? items : [];
   const limit = Math.max(0, Math.min(values.length, Math.floor(Number(primaryLimit) || 0)));
@@ -127,5 +139,7 @@ module.exports = {
   conservativePageDurationMs,
   estimateRemainingCapacity,
   planBoardSampling,
+  getBoardPriorityWeight,
+  applyBoardPriorityWeight,
   partitionInOrder
 };

@@ -25,7 +25,8 @@ function decodeUrlQuerySeparators(value) {
 }
 
 function resolveCrawlUrl(rawUrl, baseUrl) {
-  const url = new URL(decodeUrlQuerySeparators(rawUrl), baseUrl);
+  const sanitized = String(rawUrl || '').replace(/\\%/g, '%');
+  const url = new URL(decodeUrlQuerySeparators(sanitized), baseUrl);
   if (url.searchParams.get('mod')?.toLowerCase() === 'list') {
     url.searchParams.delete('uid');
   }

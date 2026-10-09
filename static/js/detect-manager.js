@@ -12,6 +12,7 @@
   let isPaused = false;
   let currentTargetUrl = '';
   let activeMasterId = null;
+  let loadedHistoryMasterId = null;
   let activeCms = null;
   let elapsedTimer = null;
   let fastScanInterval = null;
@@ -44,6 +45,9 @@
   const summaryViolationCnt = document.getElementById('summary-violation-cnt');
   const summaryElapsedTime = document.getElementById('summary-elapsed-time');
   const btnExportJson = document.getElementById('btn-export-json');
+  const historyExcludeOption = document.getElementById('history-exclude-option');
+  const excludeHistoryUrls = document.getElementById('exclude-history-urls');
+  const excludeHistoryUrlsLabel = document.getElementById('exclude-history-urls-label');
 
   // Tree Grid 요소
   const treeGridBody = document.getElementById('tree-grid-body');
@@ -62,6 +66,8 @@
   const liveBrowserUrl = document.getElementById('live-browser-url');
   const liveBrowserWebview = document.getElementById('live-browser-webview');
   const liveBrowserIframe = document.getElementById('live-browser-iframe');
+  const liveBrowserLoading = document.getElementById('live-browser-loading');
+  const liveBrowserLoadingText = document.getElementById('live-browser-loading-text');
   const liveBrowserPulse = document.getElementById('live-browser-pulse');
   const btnLiveBrowserMin = document.getElementById('btn-live-browser-min');
   const btnLiveBrowserExpand = document.getElementById('btn-live-browser-expand');
@@ -74,31 +80,68 @@
   let isBrowserMinimized = false;
   let isBrowserExpanded = false;
   let lastLoadedBrowserUrl = '';
+  let pendingLiveBrowserUrl = '';
+  let liveBrowserLoadPromise = null;
+  let liveBrowserRecoveryTimer = null;
   let knownSearchInProgress = false;
   let skipKnownSearchRequested = false;
 
-  // 실시간 미리보기 뷰어 안전 로더 (Electron webview 최우선, 중복 iframe 로딩 및 네이티브 알럿 방지)
-  function loadUrlInLiveViewer(targetUrl) {
-    if (!targetUrl || targetUrl === lastLoadedBrowserUrl) return;
+  function setLiveBrowserLoading(visible, message) {
+    if (liveBrowserLoadingText && message) liveBrowserLoadingText.textContent = message;
+    if (liveBrowserLoading) liveBrowserLoading.classList.toggle('d-none', !visible);
+  }
+
+  async function drainLiveBrowserQueue() {
+    if (knownSearchInProgress || liveBrowserLoadPromise || !pendingLiveBrowserUrl) return;
+
+    const targetUrl = pendingLiveBrowserUrl;
+    pendingLiveBrowserUrl = '';
     lastLoadedBrowserUrl = targetUrl;
+    setLiveBrowserLoading(true, '현재 점검 페이지를 불러오는 중...');
+
+    const loadTask = (async () => {
+      try {
+        if (typeof liveBrowserWebview.loadURL === 'function') {
+          await liveBrowserWebview.loadURL(targetUrl);
+        } else {
+          liveBrowserWebview.src = targetUrl;
+        }
+      } catch (err) {
+        if (!err || (err.code !== 'ERR_ABORTED' && err.errno !== -3)) {
+          console.warn('[Webview] 페이지 표시 실패:', targetUrl, err && err.message ? err.message : err);
+        }
+      }
+    })();
+
+    liveBrowserLoadPromise = loadTask;
+    try {
+      await loadTask;
+    } finally {
+      if (liveBrowserLoadPromise === loadTask) liveBrowserLoadPromise = null;
+      setLiveBrowserLoading(false);
+      if (pendingLiveBrowserUrl && pendingLiveBrowserUrl !== lastLoadedBrowserUrl) {
+        drainLiveBrowserQueue();
+      }
+    }
+  }
+
+  // 탐지 속도가 화면 로딩보다 빨라도 진행 중인 로딩을 취소하지 않고 가장 최신 주소만 이어서 표시합니다.
+  function loadUrlInLiveViewer(targetUrl) {
+    if (!targetUrl) return;
     if (liveBrowserUrl) liveBrowserUrl.textContent = targetUrl;
 
     const isElectronWebviewAvailable = liveBrowserWebview && (typeof liveBrowserWebview.loadURL === 'function' || liveBrowserWebview.tagName === 'WEBVIEW');
     if (isElectronWebviewAvailable) {
-      try {
-        if (typeof liveBrowserWebview.loadURL === 'function') {
-          liveBrowserWebview.loadURL(targetUrl).catch(() => {});
-        } else {
-          liveBrowserWebview.src = targetUrl;
-        }
-      } catch (e) {
-        try { liveBrowserWebview.src = targetUrl; } catch (e2) {}
-      }
+      if (targetUrl === lastLoadedBrowserUrl && !liveBrowserLoadPromise) return;
+      pendingLiveBrowserUrl = targetUrl;
+      drainLiveBrowserQueue();
       // webview가 동작 중일 때는 iframe에 중복 로드하지 않음 (알럿 중복 팝업 원천 차단)
       if (liveBrowserIframe) {
         liveBrowserIframe.src = 'about:blank';
       }
     } else if (liveBrowserIframe) {
+      if (targetUrl === lastLoadedBrowserUrl) return;
+      lastLoadedBrowserUrl = targetUrl;
       liveBrowserIframe.src = targetUrl;
     }
   }
@@ -475,6 +518,32 @@
     liveBrowserWebview.addEventListener('dom-ready', function () {
       try { liveBrowserWebview.executeJavaScript(blockScript); } catch (e) {}
     });
+
+    liveBrowserWebview.addEventListener('did-finish-load', function () {
+      setLiveBrowserLoading(false);
+    });
+
+    liveBrowserWebview.addEventListener('did-fail-load', function (event) {
+      if (event && event.errorCode === -3) return;
+      setLiveBrowserLoading(false);
+      console.warn('[Webview] 페이지 로딩 실패:', event && event.validatedURL, event && event.errorDescription);
+    });
+
+    liveBrowserWebview.addEventListener('render-process-gone', function () {
+      const recoveryUrl = pendingLiveBrowserUrl || currentTargetUrl || lastLoadedBrowserUrl;
+      pendingLiveBrowserUrl = recoveryUrl;
+      lastLoadedBrowserUrl = '';
+      liveBrowserLoadPromise = null;
+      setLiveBrowserLoading(true, '실시간 화면을 다시 연결하는 중...');
+
+      if (liveBrowserRecoveryTimer) clearTimeout(liveBrowserRecoveryTimer);
+      liveBrowserRecoveryTimer = setTimeout(function () {
+        try {
+          if (typeof liveBrowserWebview.reload === 'function') liveBrowserWebview.reload();
+        } catch (e) {}
+        drainLiveBrowserQueue();
+      }, 500);
+    });
   }
 
   // 엄격한 URL 유효성 검증 함수 (www 등 미완성 주소 차단)
@@ -522,6 +591,23 @@
       feedbackEl.textContent = val.length === 0
         ? '점검을 시작할 공공 웹사이트의 전체 주소(https://...)를 입력해 주세요.'
         : '올바른 형식의 웹사이트 주소를 입력해 주세요. (예: https://www.example.go.kr/board/list)';
+    }
+  }
+
+  function showHistoryExcludeOption(masterId, historyNodes, historyFindings) {
+    loadedHistoryMasterId = masterId || null;
+    if (!loadedHistoryMasterId || !historyExcludeOption || !excludeHistoryUrls) return;
+
+    const historyUrls = new Set();
+    for (const item of [...(historyNodes || []), ...(historyFindings || [])]) {
+      const value = String((item && item.url) || '').replace(/\\%/g, '%').trim();
+      if (value) historyUrls.add(value);
+    }
+
+    excludeHistoryUrls.checked = true;
+    historyExcludeOption.classList.remove('d-none');
+    if (excludeHistoryUrlsLabel) {
+      excludeHistoryUrlsLabel.textContent = `이전 탐지 URL 제외 (${historyUrls.size}개)`;
     }
   }
 
@@ -608,6 +694,7 @@
     if (inputUrl) inputUrl.disabled = isBusy;
     if (inputTempPolluted) inputTempPolluted.disabled = isBusy;
     if (inputTempAllowed) inputTempAllowed.disabled = isBusy;
+    if (excludeHistoryUrls) excludeHistoryUrls.disabled = isBusy;
     renderKeywordTags('polluted');
     renderKeywordTags('allowed');
   }
@@ -637,12 +724,16 @@
     const maxTimeSec = selectTimeEl ? Number(selectTimeEl.value) || 1800 : 1800;
     const maxMinutesText = Math.floor(maxTimeSec / 60) + '분';
     const speedText = (speedDelayMs / 1000).toFixed(1) + '초 딜레이';
+    const excludeHistoryMasterId = loadedHistoryMasterId && excludeHistoryUrls && excludeHistoryUrls.checked
+      ? loadedHistoryMasterId
+      : null;
 
     if (!skipConfirm) {
       const confirmMsg = `입력하신 공공 웹사이트에 대해 불법광고 전체 점검을 시작하시겠습니까?\n\n` +
         `점검 대상: ${url}\n` +
         `점검 속도: ${speedText} (서버 부하 및 차단 방지)\n` +
-        `점검 시간: ${maxMinutesText} (지정 시간 동안 깊이 있게 탐색)`;
+        `점검 시간: ${maxMinutesText} (지정 시간 동안 깊이 있게 탐색)` +
+        (excludeHistoryMasterId ? `\n이전 탐지 URL: 제외` : '');
 
       if (!confirm(confirmMsg)) {
         return;
@@ -663,9 +754,26 @@
     processedFindingIds.clear();
     processedNodeUids.clear();
     lastLoadedBrowserUrl = '';
+    pendingLiveBrowserUrl = '';
     clearFindingsUrlFilter();
 
-    // 실시간 브라우저 뷰어 즉시 초기화 (이전 사이트 잔상 제거)
+    // 새 점검마다 이전 사이트의 렌더링 상태와 방문 기록을 비웁니다.
+    if (liveBrowserRecoveryTimer) {
+      clearTimeout(liveBrowserRecoveryTimer);
+      liveBrowserRecoveryTimer = null;
+    }
+    if (liveBrowserWebview) {
+      try {
+        if (typeof liveBrowserWebview.stop === 'function') liveBrowserWebview.stop();
+        if (typeof liveBrowserWebview.loadURL === 'function') {
+          await liveBrowserWebview.loadURL('about:blank');
+        } else {
+          liveBrowserWebview.src = 'about:blank';
+        }
+        if (typeof liveBrowserWebview.clearHistory === 'function') liveBrowserWebview.clearHistory();
+      } catch (e) {}
+      liveBrowserLoadPromise = null;
+    }
     if (liveBrowserIframe) liveBrowserIframe.src = 'about:blank';
     if (liveBrowserOverlay) liveBrowserOverlay.classList.add('d-none');
 
@@ -693,7 +801,8 @@
           tempPollutedKeywords,
           tempAllowedKeywords,
           knownSearchUrls: knownSearch.urls,
-          knownSearchCompleted: knownSearch.completed
+          knownSearchCompleted: knownSearch.completed,
+          excludeHistoryMasterId
         })
       });
       const data = await res.json();
@@ -806,8 +915,8 @@
         if (Array.isArray(data.recentNodes)) {
           for (const node of data.recentNodes) {
             if (!processedNodeUids.has(node.uid)) {
-              processedNodeUids.add(node.uid);
               addNodeToTreeGrid(node);
+              processedNodeUids.add(node.uid);
             }
           }
         }
@@ -946,13 +1055,18 @@
     const emptyRow = document.getElementById('tree-grid-empty');
     if (emptyRow) emptyRow.remove();
 
-    const nodeDepth = (node.depth !== undefined) ? node.depth : (node.level !== undefined ? node.level : 0);
-    const nodeName = node.pathSegment || node.path_segment || node.name || (node.url ? (new URL(node.url, 'http://localhost')).pathname : '/');
-    const fullUrl = node.url || node.fullUrl || '#';
-    const nodeTitle = node.title || nodeName;
+    const rawNodeName = node.pathSegment || node.path_segment || node.name || (node.url ? (new URL(node.url, 'http://localhost')).pathname : '/');
+    let nodeName = String(rawNodeName || '').replace(/\\%/g, '%');
+    try { nodeName = decodeURI(nodeName); } catch (e) {}
+    const fullUrl = String(node.url || node.fullUrl || '#').replace(/\\%/g, '%');
+    let nodeTitle = node.title || nodeName;
+    try { nodeTitle = decodeURI(String(nodeTitle).replace(/\\%/g, '%')); } catch (e) {}
     const nodeStatus = node.status || node.http_status || 200;
     const nodeViolationCnt = (node.violationCnt !== undefined) ? node.violationCnt : (node.violation_cnt !== undefined ? node.violation_cnt : (node.hasViolation || node.has_violation ? 1 : 0));
     const tech = node.technique || (node.techniques && node.techniques.length > 0 ? node.techniques[0] : '-');
+    const rawNodeDepth = node.level !== undefined ? node.level : node.depth;
+    const parsedNodeDepth = Number.parseInt(rawNodeDepth, 10);
+    const nodeDepth = Number.isFinite(parsedNodeDepth) && parsedNodeDepth >= 0 ? parsedNodeDepth : 0;
 
     const tr = document.createElement('tr');
     tr.className = `tree-grid-row level-${nodeDepth}`;
@@ -1073,17 +1187,12 @@
 
         return `
           <div class="p-2 mb-2 bg-white rounded border shadow-sm small" style="word-break: break-all;">
-            <div class="d-flex align-items-center justify-content-between mb-1 gap-2">
+            <div class="d-flex align-items-center mb-1 gap-2">
               <div class="text-truncate" style="min-width: 0;">
                 <span class="badge ${getTechBadgeClass(f.technique)} me-1">${getTechLabel(f.technique)}</span>
                 <strong class="text-danger">#${idx + 1}</strong>
                 ${kwBadge}
                 <span class="text-secondary ms-2">${escapeHtml(reasonText)}</span>
-              </div>
-              <div class="flex-shrink-0">
-                <button type="button" class="btn btn-outline-primary btn-sm py-0 px-2 fs-7 text-nowrap" onclick="openLiveBrowserUrl('${escapeHtml(targetUrl)}', '위반 확인 #${idx + 1}')">
-                  <i class="bi bi-eye me-1"></i>페이지 확인
-                </button>
               </div>
             </div>
             <div class="text-muted font-monospace bg-light p-2 rounded border" style="white-space: pre-wrap; word-break: break-all; font-size: 0.8rem; line-height: 1.4;">
@@ -1164,6 +1273,8 @@
       case 'TRANSPARENT': return '투명 텍스트';
       case 'OFFSCREEN': return '화면 밖 은닉';
       case 'ETC': return '추가 탐지';
+      case 'NONSTANDARD_PORT': return '비표준포트오염';
+      case 'REFLECTED_SEARCH': return '반사형검색오염';
       default: return tech;
     }
   }
@@ -1175,6 +1286,8 @@
       case 'TRANSPARENT': return 'text-bg-warning';
       case 'OFFSCREEN': return 'text-bg-warning';
       case 'ETC': return 'text-bg-info';
+      case 'NONSTANDARD_PORT': return 'text-bg-info';
+      case 'REFLECTED_SEARCH': return 'text-bg-info';
       default: return 'text-bg-secondary';
     }
   }
@@ -1356,6 +1469,7 @@
     li.dataset.tech = item.technique;
 
     const cleanedEvidence = cleanEvidenceText(item.evidence_text);
+    const isSearchPollutionFinding = item.technique === 'NONSTANDARD_PORT' || item.technique === 'REFLECTED_SEARCH';
     const reasonText = item.reason || (item.extra_finding && item.extra_finding.startsWith('REASON:') ? item.extra_finding.replace('REASON:', '').trim() : item.extra_finding);
     const reasonHtml = reasonText ? `
       <div class="mb-2 p-2 rounded bg-danger-subtle border border-danger-subtle text-danger small fw-semibold">
@@ -1391,7 +1505,7 @@
               <i class="bi bi-chat-left-quote me-1 text-danger"></i>근거 원문:
               <span class="text-danger fw-bold">&ldquo;${highlightedEvidence}&rdquo;</span>
             </div>
-            <div class="d-flex flex-wrap justify-content-start gap-1 mt-2">
+            <div class="d-flex flex-wrap justify-content-start gap-1 mt-2 ${isSearchPollutionFinding ? 'd-none' : ''}">
               <button type="button" class="btn btn-outline-primary btn-sm py-0 px-2 fs-7 fw-semibold fcms-solution-toggle" aria-expanded="false">
                 <i class="bi bi-code-square me-1"></i>한줄 솔루션<i class="bi bi-chevron-down ms-1 fcms-solution-chevron"></i>
               </button>
@@ -1447,7 +1561,16 @@
 
   // 8. 탭별 건수 뱃지 갱신
   function updateTabCounts() {
-    const counts = { ALL: findings.length, JAMO: 0, HOMOGLYPH: 0, TRANSPARENT: 0, OFFSCREEN: 0, ETC: 0 };
+    const counts = {
+      ALL: findings.length,
+      JAMO: 0,
+      HOMOGLYPH: 0,
+      TRANSPARENT: 0,
+      OFFSCREEN: 0,
+      ETC: 0,
+      NONSTANDARD_PORT: 0,
+      REFLECTED_SEARCH: 0
+    };
     findings.forEach(f => {
       if (counts[f.technique] !== undefined) counts[f.technique]++;
     });
@@ -1935,6 +2058,7 @@
           }
 
           // [점검 완료 또는 중지인 경우]
+          showHistoryExcludeOption(master.id, historyNodes, historyFindings);
           if (master.status === 'STOPPED') {
             setDetectUIState('idle');
           } else {
@@ -2069,6 +2193,44 @@
           for (const item of data.findings) {
             processedFindingIds.add(item.id);
             addFinding(item);
+          }
+        }
+
+        // 새로고침 전까지 저장된 트리 노드를 DB에서 한 번 복원합니다.
+        if (activeMasterId && treeGridBody) {
+          try {
+            const historyRes = await fetch('/mgr/api/detect/history/' + encodeURIComponent(activeMasterId));
+            const historyJson = await historyRes.json();
+            const storedNodes = historyJson && historyJson.success && historyJson.data && Array.isArray(historyJson.data.nodes)
+              ? historyJson.data.nodes
+              : [];
+
+            if (storedNodes.length > 0) {
+              treeNodes = [];
+              treeGridBody.innerHTML = '';
+              processedNodeUids.clear();
+
+              for (const node of storedNodes) {
+                const uid = `node_${node.id}`;
+                const matchedFindings = (data.findings || []).filter(f => f.url === node.url);
+                const nodeTechs = matchedFindings.map(f => f.technique).filter(Boolean);
+                addNodeToTreeGrid({
+                  uid,
+                  parentUid: node.parent_id ? `node_${node.parent_id}` : null,
+                  depth: node.depth || 0,
+                  url: node.url,
+                  pathSegment: node.path_segment || node.url,
+                  title: node.title || node.path_segment,
+                  status: node.http_status || 200,
+                  violationCnt: (node.violation_cnt !== undefined && node.violation_cnt !== null) ? node.violation_cnt : matchedFindings.length,
+                  technique: node.technique || (nodeTechs.length > 0 ? nodeTechs[0] : null),
+                  techniques: nodeTechs
+                });
+                processedNodeUids.add(uid);
+              }
+            }
+          } catch (treeRestoreErr) {
+            console.warn('[Tree Restore Error]', treeRestoreErr);
           }
         }
 

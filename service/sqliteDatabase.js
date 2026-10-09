@@ -178,10 +178,25 @@ function getDatabase() {
     // 새 DB이거나 이미 컬럼이 있는 경우 정상 무시
   }
 
+  const schemaStateFile = String(process.env.TARAE_SCHEMA_STATE_FILE || '').trim();
+  const schemaVersion = String(process.env.TARAE_SCHEMA_VERSION || '').trim();
+  let schemaIsCurrent = false;
+  if (schemaStateFile && schemaVersion) {
+    try {
+      const state = JSON.parse(fs.readFileSync(schemaStateFile, 'utf8'));
+      schemaIsCurrent = state && state.version === schemaVersion;
+    } catch (err) {
+      schemaIsCurrent = false;
+    }
+  }
+
   try {
     const schemaPath = path.join(__dirname, '..', 'sql', 'schema.sql');
-    if (fs.existsSync(schemaPath)) {
+    if (!schemaIsCurrent && fs.existsSync(schemaPath)) {
       database.exec(fs.readFileSync(schemaPath, 'utf8'));
+      if (schemaStateFile && schemaVersion) {
+        fs.writeFileSync(schemaStateFile, JSON.stringify({ version: schemaVersion }), 'utf8');
+      }
     }
   } catch (err) {
     console.error('schema.sql 실행 경고:', err.message);

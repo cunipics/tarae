@@ -1,12 +1,15 @@
 {
-  "name": "node-cms-source",
-  "version": "1.0.0",
+  "name": "tarae_cms",
+  "version": "0.2.0",
   "private": true,
   "main": "main.js",
   "type": "commonjs",
   "scripts": {
     "start": "node --watch app.js",
-    "electron": "electron main.js"
+    "electron": "electron main.js",
+    "prepare:seed": "node scripts/createSeedDatabase.js",
+    "build:win": "npm run prepare:seed && electron-builder --win --x64",
+    "build:release": "npm run prepare:seed && electron-builder --win --x64 --publish never"
   },
   "engines": {
     "node": ">=22.13.0"
@@ -14,9 +17,10 @@
   "dependencies": {
     "@huggingface/transformers": "^4.3.0",
     "cors": "^2.8.6",
-    "dotenv": "^16.6.1",
     "domutils": "^4.0.2",
+    "dotenv": "^16.6.1",
     "ejs": "^3.1.10",
+    "electron-updater": "^6.8.9",
     "express": "^4.22.1",
     "express-ejs-layouts": "2.5.1",
     "express-session": "^1.19.0",
@@ -35,11 +39,78 @@
     "js-yaml": "4.3.2"
   },
   "devDependencies": {
-    "electron": "^44.4.1"
+    "electron": "^44.4.1",
+    "electron-builder": "^26.15.3"
   },
   "allowScripts": {
     "onnxruntime-node": true,
     "protobufjs": true,
     "puppeteer": true
+  },
+  "build": {
+    "appId": "com.unipics.tarae",
+    "productName": "Tarae 불법 광고 탐지 시스템",
+    "asar": true,
+    "files": [
+      "!node_modules/@huggingface/transformers/.cache{,/**/*}",
+      "!node_modules/onnxruntime-node/bin/napi-v6/linux{,/**/*}",
+      "!node_modules/onnxruntime-node/bin/napi-v6/darwin{,/**/*}",
+      "!node_modules/onnxruntime-node/bin/napi-v6/win32/arm64{,/**/*}",
+      "!logs{,/**/*}",
+      "!scratch{,/**/*}",
+      "!output{,/**/*}",
+      "!test{,/**/*}",
+      "!.agents{,/**/*}",
+      "!result.json",
+      "!result_extra.json",
+      "!cms.db",
+      "!*.db-shm",
+      "!*.db-wal",
+      "!test_*.txt",
+      "!scratch_*.html"
+    ],
+    "extraResources": [
+      {
+        "from": "build/seed/cms.db",
+        "to": "seed/cms.db"
+      }
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "artifactName": "tarae-setup-${version}-${arch}.${ext}",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Tarae 불법 광고 탐지 시스템"
+    },
+    "portable": {
+      "artifactName": "tarae-portable-${version}-${arch}.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "cunipics",
+        "repo": "tarae"
+      }
+    ]
   }
 }

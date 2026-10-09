@@ -95,7 +95,7 @@
       <!--begin::Results Main Area-->
       <div class="col-lg-8">
         <!--begin::URL Input Form-->
-        <form class="mb-3" id="form-detect" onsubmit="return false;">
+        <form class="mb-2" id="form-detect" onsubmit="return false;">
           <label for="detect-url-input" class="visually-hidden"> 점검 대상 URL </label>
           <div class="input-group input-group-lg shadow-sm">
             <span class="input-group-text bg-body-tertiary">
@@ -119,12 +119,23 @@
         </form>
         <!--end::URL Input Form-->
 
+        <!--begin::URL 검증 피드백 문구-->
+        <div class="form-text text-muted mb-2 px-1" id="url-validation-feedback">
+          점검을 시작할 공공 웹사이트의 전체 주소(https://...)를 입력해 주세요.
+        </div>
+        <!--end::URL 검증 피드백 문구-->
+
         <!--begin::점검 옵션 바 (속도 지연시간 조절 및 최대 페이지 수)-->
         <div class="d-flex flex-wrap align-items-center justify-content-between mb-3 px-1 gap-2">
-          <div class="form-text text-muted mb-0" id="url-validation-feedback">
-            점검을 시작할 공공 웹사이트의 전체 주소(https://...)를 입력해 주세요.
+          <div class="d-flex align-items-center">
+            <div class="form-check form-switch mb-0 me-1 d-none" id="history-exclude-option" title="현재 이력에서 방문했던 하위 URL을 이번 탐지에서 제외합니다.">
+              <input class="form-check-input" type="checkbox" role="switch" id="exclude-history-urls" checked>
+              <label class="form-check-label small text-secondary text-nowrap" for="exclude-history-urls" id="exclude-history-urls-label">
+                이전 탐지 URL 제외
+              </label>
+            </div>
           </div>
-          <div class="d-flex align-items-center gap-2">
+          <div class="d-flex flex-wrap align-items-center justify-content-end gap-2 ms-auto">
             <div class="input-group input-group-sm" style="width: auto;">
               <span class="input-group-text bg-light text-secondary">
                 <i class="bi bi-speedometer2 me-1"></i>속도(지연)
@@ -206,6 +217,18 @@
                 <button class="nav-link fw-semibold" type="button" data-type="ETC">
                   추가 탐지
                   <span class="badge text-bg-info ms-1" id="tab-cnt-ETC">0</span>
+                </button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link fw-semibold" type="button" data-type="NONSTANDARD_PORT">
+                  비표준포트오염
+                  <span class="badge text-bg-info ms-1" id="tab-cnt-NONSTANDARD_PORT">0</span>
+                </button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link fw-semibold" type="button" data-type="REFLECTED_SEARCH">
+                  반사형검색오염
+                  <span class="badge text-bg-info ms-1" id="tab-cnt-REFLECTED_SEARCH">0</span>
                 </button>
               </li>
             </ul>
@@ -380,7 +403,7 @@
   </div>
   <!-- 실제 웹페이지 뷰어 (Electron webview & iframe 호환) -->
   <div class="flex-grow-1 position-relative bg-white" id="live-browser-body" style="min-height: 0;">
-    <webview id="live-browser-webview" src="about:blank" partition="persist:fcms-live-browser" style="width: 100%; height: 100%; border: none;" preload="<%= typeof webviewPreloadPath !== 'undefined' ? ('file:///' + webviewPreloadPath.replace(/\\/g, '/')) : '' %>" sandbox="allow-scripts allow-same-origin allow-forms allow-downloads"></webview>
+    <webview id="live-browser-webview" src="about:blank" partition="persist:fcms-live-browser" style="width: 100%; height: 100%; border: none;" preload="<%= typeof webviewPreloadPath !== 'undefined' ? ('file:///' + webviewPreloadPath.replace(/\\/g, '/')) : '' %>" sandbox="allow-scripts allow-same-origin allow-forms"></webview>
     <iframe id="live-browser-iframe" src="about:blank" style="width: 100%; height: 100%; border: none; display: none;" referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
     <div id="live-browser-loading" class="position-absolute top-0 start-0 w-100 h-100 bg-white bg-opacity-75 d-flex flex-column align-items-center justify-content-center d-none">
       <div class="spinner-border text-primary mb-2" role="status" style="width: 2rem; height: 2rem;"></div>

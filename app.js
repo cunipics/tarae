@@ -1,8 +1,8 @@
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 const helmet = require('helmet');
 const express = require('express');
 const ejs = require('ejs');
-const path = require('path');
 const session = require('express-session');
 const i18n = require('i18n');
 const sanitizeHtml = require('sanitize-html');
@@ -16,7 +16,11 @@ const app = express();
 todo 
 1. 공공기관 관리자가 탐지 결과를 보고 바로 조치할 수 있도록 화면(UI)에서 "조치/해결 가이드"(예: 은닉 CSS 속성 제거법, 해당 게시글 즉시 삭제 및 차단 권고 등)를 함께 안내해 주면 실무 활용성 평가에서 매우 유리한 가산점 요인이 됩니다.
 2. 적발 항목 카드마다 유형별 [조치 가이드] 펼침 영역
+exe빌드
+npm ci
+npm run build:win
 
+직접
 npm start
 npx electron main.js
 pm2 start --watch .\ecosystem.config.js

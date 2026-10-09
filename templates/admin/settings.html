@@ -133,6 +133,32 @@
                         <button type="button" class="btn btn-primary" id="btn-save-crawler-settings">설정 저장</button>
                       </div>
                     </div>
+
+                    <div class="card mt-3">
+                      <div class="card-header">
+                        <h3 class="card-title">프로그램 업데이트</h3>
+                      </div>
+                      <div class="card-body">
+                        <div class="row mb-3">
+                          <div class="col-sm-4 fw-semibold">현재 버전</div>
+                          <div class="col-sm-8" id="updater-current-version">확인 중</div>
+                        </div>
+                        <div id="updater-status" class="alert alert-secondary mb-3" role="status">
+                          업데이트 상태를 확인하고 있습니다.
+                        </div>
+                        <div id="updater-progress-wrap" class="d-none">
+                          <div class="progress" role="progressbar" aria-label="업데이트 다운로드 진행률" aria-valuemin="0" aria-valuemax="100">
+                            <div id="updater-progress" class="progress-bar" style="width: 0%">0%</div>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="card-footer d-flex flex-wrap justify-content-end gap-2">
+                        <button type="button" class="btn btn-outline-secondary" id="btn-open-releases">릴리스 페이지 열기</button>
+                        <button type="button" class="btn btn-outline-primary" id="btn-check-update">업데이트 확인</button>
+                        <button type="button" class="btn btn-primary d-none" id="btn-download-update">업데이트 다운로드</button>
+                        <button type="button" class="btn btn-success d-none" id="btn-install-update">지금 재시작하여 설치</button>
+                      </div>
+                    </div>
                   </div>
 
                 </div>
@@ -208,5 +234,75 @@
 
   const tabEl = document.getElementById('crawler-settings-tab');
   if (tabEl) tabEl.addEventListener('shown.bs.tab', loadSettings);
+}());
+
+(function() {
+  const api = window.taraeUpdater;
+
+  function renderUpdateState(state) {
+    if (!state) return;
+    const versionEl = document.getElementById('updater-current-version');
+    const statusEl = document.getElementById('updater-status');
+    const progressWrap = document.getElementById('updater-progress-wrap');
+    const progressEl = document.getElementById('updater-progress');
+    const checkBtn = document.getElementById('btn-check-update');
+    const downloadBtn = document.getElementById('btn-download-update');
+    const installBtn = document.getElementById('btn-install-update');
+
+    if (versionEl) versionEl.textContent = state.currentVersion || '-';
+    if (statusEl) {
+      statusEl.textContent = state.message || '업데이트 상태를 확인할 수 없습니다.';
+      const danger = state.status === 'error';
+      const success = state.status === 'up-to-date' || state.status === 'downloaded';
+      statusEl.className = 'alert mb-3 ' + (danger ? 'alert-danger' : (success ? 'alert-success' : 'alert-secondary'));
+    }
+
+    const showProgress = state.status === 'downloading' || state.status === 'downloaded';
+    if (progressWrap) progressWrap.classList.toggle('d-none', !showProgress);
+    if (progressEl) {
+      const percent = Math.max(0, Math.min(100, Number(state.progressPercent) || 0));
+      progressEl.style.width = percent + '%';
+      progressEl.textContent = percent.toFixed(1) + '%';
+      progressEl.setAttribute('aria-valuenow', String(percent));
+    }
+
+    if (checkBtn) {
+      checkBtn.disabled = Boolean(state.checking || state.downloading);
+      checkBtn.classList.toggle('d-none', Boolean(state.downloaded));
+    }
+    if (downloadBtn) {
+      downloadBtn.disabled = Boolean(state.downloading);
+      downloadBtn.classList.toggle('d-none', state.status !== 'available' && state.status !== 'downloading');
+    }
+    if (installBtn) installBtn.classList.toggle('d-none', !state.downloaded);
+  }
+
+  document.addEventListener('DOMContentLoaded', async function() {
+    const checkBtn = document.getElementById('btn-check-update');
+    const downloadBtn = document.getElementById('btn-download-update');
+    const installBtn = document.getElementById('btn-install-update');
+    const releasesBtn = document.getElementById('btn-open-releases');
+
+    if (!api) {
+      renderUpdateState({
+        status: 'unavailable',
+        currentVersion: '-',
+        message: '업데이트 기능은 설치된 Tarae 프로그램에서만 사용할 수 있습니다.'
+      });
+      if (checkBtn) checkBtn.disabled = true;
+      if (downloadBtn) downloadBtn.disabled = true;
+      if (installBtn) installBtn.disabled = true;
+      if (releasesBtn) releasesBtn.disabled = true;
+      return;
+    }
+
+    api.onStatus(renderUpdateState);
+    renderUpdateState(await api.getStatus());
+
+    if (checkBtn) checkBtn.addEventListener('click', async () => renderUpdateState(await api.check()));
+    if (downloadBtn) downloadBtn.addEventListener('click', async () => renderUpdateState(await api.download()));
+    if (installBtn) installBtn.addEventListener('click', () => api.install());
+    if (releasesBtn) releasesBtn.addEventListener('click', () => api.openReleases());
+  });
 }());
 </script>

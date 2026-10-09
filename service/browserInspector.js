@@ -9,6 +9,29 @@
 let puppeteer = null;
 let browser = null;
 
+// 응답하지 않는 Chromium은 Windows에서 자식 렌더러까지 함께 종료
+async function forceTerminateBrowser(browserInstance) {
+  const browserProcess = browserInstance && browserInstance.process ? browserInstance.process() : null;
+  if (!browserProcess || !browserProcess.pid) return;
+
+  if (process.platform === 'win32') {
+    const { spawn } = require('node:child_process');
+    await new Promise(resolve => {
+      const killer = spawn('taskkill', ['/PID', String(browserProcess.pid), '/T', '/F'], {
+        windowsHide: true,
+        stdio: 'ignore'
+      });
+      const finish = () => resolve();
+      killer.once('exit', finish);
+      killer.once('error', finish);
+      setTimeout(finish, 2000);
+    });
+    return;
+  }
+
+  if (!browserProcess.killed) browserProcess.kill('SIGKILL');
+}
+
 // Puppeteer 모듈 지연 로딩
 async function getPuppeteer() {
   if (!puppeteer) {
@@ -49,10 +72,18 @@ async function getBrowser() {
 // 브라우저 종료
 async function closeBrowser() {
   if (browser && browser.connected) {
-    try {
-      await browser.close();
-    } catch (e) {}
+    const activeBrowser = browser;
     browser = null;
+    try {
+      const closePromise = activeBrowser.close().then(() => true).catch(() => false);
+      const closed = await Promise.race([
+        closePromise,
+        new Promise(resolve => setTimeout(() => resolve(false), 1500))
+      ]);
+      if (!closed) {
+        await forceTerminateBrowser(activeBrowser);
+      }
+    } catch (e) {}
   }
 }
 
@@ -67,12 +98,33 @@ async function inspectPageDetails(url, timeoutMs = 15000, options = {}) {
   const renderedLinks = [];
   let renderedHtml = '';
   let page = null;
+  let pageBrowser = null;
+  let hardTimeoutTimer = null;
+  let forceCloseTimer = null;
+  let hardTimedOut = false;
+  let effectiveTimeoutMs = Math.max(3000, Number(timeoutMs) || 15000);
   const waitForDynamicNetwork = options.waitForDynamicNetwork !== false;
   const collectDynamicPagination = options.collectDynamicPagination !== false;
 
   try {
     const br = await getBrowser();
+    pageBrowser = br;
     page = await br.newPage();
+
+    // goto뿐 아니라 DOM/CSS 검사 전체가 제한 시간을 넘기면 해당 탭을 닫아 다음 URL로 진행
+    hardTimeoutTimer = setTimeout(() => {
+      hardTimedOut = true;
+      if (page && !page.isClosed()) {
+        page.close({ runBeforeUnload: false }).catch(() => {});
+      }
+      // 렌더러가 응답하지 않아 탭 종료도 실패하면 브라우저를 재시작할 수 있게 종료
+      forceCloseTimer = setTimeout(() => {
+        if (browser === br) {
+          browser = null;
+          forceTerminateBrowser(br).catch(() => {});
+        }
+      }, 1000);
+    }, effectiveTimeoutMs);
 
     // 브라우저에서 alert, confirm, prompt 등 대화상자 발생 시 자동으로 즉시 닫기
     page.on('dialog', async dialog => {
@@ -86,6 +138,11 @@ async function inspectPageDetails(url, timeoutMs = 15000, options = {}) {
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
     );
     await page.setViewport({ width: 1920, height: 1080 });
+
+    // 정적 페이지는 스크립트를 실행하지 않아 사이트 코드가 렌더러를 점유하는 상황을 차단
+    if (!waitForDynamicNetwork && !collectDynamicPagination) {
+      await page.setJavaScriptEnabled(false);
+    }
 
     // CSS 검사에 불필요한 대용량 이미지, 미디어, 폰트 및 외부 광고/통계 추적기 차단 (검사 속도 대폭 향상)
     try {
@@ -289,10 +346,21 @@ async function inspectPageDetails(url, timeoutMs = 15000, options = {}) {
         'br', 'hr', 'img', 'svg', 'path', 'audio', 'video', 'canvas', 'caption', 'colgroup', 'col'
       ]);
 
-      // 모든 DOM 요소 순회
-      const allElements = document.querySelectorAll('*');
+      // 직접 텍스트를 가진 요소만 수집한다. 기존 검사 대상은 유지하면서 빈 요소의 CSS 계산을 피한다.
+      const directTextElements = new Map();
+      const root = document.body || document.documentElement;
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      let textNode = walker.nextNode();
+      while (textNode) {
+        const text = (textNode.textContent || '').trim();
+        const parent = textNode.parentElement;
+        if (parent && text.length >= 2) {
+          directTextElements.set(parent, `${directTextElements.get(parent) || ''}${text}`);
+        }
+        textNode = walker.nextNode();
+      }
 
-      for (const el of allElements) {
+      for (const [el, directText] of directTextElements) {
         const tag = el.tagName.toLowerCase();
         if (skipTags.has(tag)) continue;
 
@@ -309,15 +377,6 @@ async function inspectPageDetails(url, timeoutMs = 15000, options = {}) {
         if (clsStr.includes('aos-') || el.hasAttribute('data-aos') || el.closest('.aos-init, [data-aos], .wow, .animated, .animate__animated')) {
           continue;
         }
-
-        // 텍스트 노드가 있는 요소만 검사 (직접 텍스트가 있는 경우)
-        const directText = Array.from(el.childNodes)
-          .filter(n => n.nodeType === 3) // TEXT_NODE
-          .map(n => n.textContent.trim())
-          .join('')
-          .trim();
-
-        if (!directText || directText.length < 2) continue;
 
         // 스크린리더(웹 접근성) 전용 단어는 은닉 불법광고가 아니므로 제외
         const accessTerms = ['초기화', '축소', '확대', '검색', '닫기', '열기', '이전', '다음', '메뉴', '선택', '바로가기', '열린', '새창', '새창열림', '다운로드', '목록', '더보기', '페이지', '홈', '인쇄', '공유', '상세보기'];
@@ -499,12 +558,21 @@ async function inspectPageDetails(url, timeoutMs = 15000, options = {}) {
           }
 
           const skipTags = new Set(['script','style','meta','link','noscript','head','br','hr','img','svg','path']);
-          const allElements = document.querySelectorAll('*');
+          const directTextElements = new Map();
+          const root = document.body || document.documentElement;
+          const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+          let textNode = walker.nextNode();
+          while (textNode) {
+            const text = (textNode.textContent || '').trim();
+            const parent = textNode.parentElement;
+            if (parent && text.length >= 2) {
+              directTextElements.set(parent, `${directTextElements.get(parent) || ''}${text}`);
+            }
+            textNode = walker.nextNode();
+          }
 
-          for (const el of allElements) {
+          for (const [el, directText] of directTextElements) {
             if (skipTags.has(el.tagName.toLowerCase())) continue;
-            const directText = Array.from(el.childNodes).filter(n => n.nodeType === 3).map(n => n.textContent.trim()).join('').trim();
-            if (!directText || directText.length < 2) continue;
 
             const style = window.getComputedStyle(el);
             const rect = el.getBoundingClientRect();
@@ -537,10 +605,26 @@ async function inspectPageDetails(url, timeoutMs = 15000, options = {}) {
 
     results.push(...findings);
   } catch (err) {
-    console.error('[BrowserInspector] 페이지 검사 오류:', url, err.message);
+    if (hardTimedOut) {
+      console.warn(`[BrowserInspector] 전체 검사 제한 시간 초과(${effectiveTimeoutMs}ms), 다음 URL로 진행:`, url);
+    } else {
+      console.error('[BrowserInspector] 페이지 검사 오류:', url, err.message);
+    }
   } finally {
-    if (page) {
-      try { await page.close(); } catch (e) {}
+    if (hardTimeoutTimer) clearTimeout(hardTimeoutTimer);
+    if (forceCloseTimer) clearTimeout(forceCloseTimer);
+    if (hardTimedOut && pageBrowser) {
+      if (browser === pageBrowser) browser = null;
+      await forceTerminateBrowser(pageBrowser);
+    } else if (page) {
+      try {
+        if (!page.isClosed()) {
+          await Promise.race([
+            page.close({ runBeforeUnload: false }),
+            new Promise(resolve => setTimeout(resolve, 1000))
+          ]);
+        }
+      } catch (e) {}
     }
   }
 

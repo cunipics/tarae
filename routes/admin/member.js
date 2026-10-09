@@ -34,7 +34,15 @@ function normalizeRequiredTerms(value) {
 router.get('/index', checkPermission, asyncReqHandler(async function(req, res) {
     let summary = { total_sites: 0, total_pages: 0, total_violations: 0, completed_sites: 0 };
     let masterList = [];
-    let techStats = { JAMO: 0, HOMOGLYPH: 0, TRANSPARENT: 0, OFFSCREEN: 0, ETC: 0 };
+    let techStats = {
+      JAMO: 0,
+      HOMOGLYPH: 0,
+      TRANSPARENT: 0,
+      OFFSCREEN: 0,
+      ETC: 0,
+      NONSTANDARD_PORT: 0,
+      REFLECTED_SEARCH: 0
+    };
     let categoryStats = { gambling_cnt: 0, adult_cnt: 0, loan_cnt: 0, total_cnt: 0 };
     let aiAccuracy = { total_cnt: 0, avg_sim_score: 0, avg_confidence: 0, illegal_cnt: 0 };
 
@@ -668,19 +676,50 @@ router.get('/api/detect/search-keywords', checkPermission, asyncReqHandler(async
 
 // 점검 시작 API (URL, 속도 딜레이, 점검 제한 시간, 최대 페이지 수, 이번만 적용/제외 키워드)
 router.post('/api/detect/start', checkPermission, asyncReqHandler(async function(req, res) {
-    const { url, speedDelayMs, maxPages, maxTimeSec, tempPollutedKeywords, tempAllowedKeywords, knownSearchUrls, knownSearchCompleted } = req.body || {};
+    const { url, speedDelayMs, maxPages, maxTimeSec, tempPollutedKeywords, tempAllowedKeywords, knownSearchUrls, knownSearchCompleted, excludeHistoryMasterId } = req.body || {};
     if (!url || !url.trim()) {
         return res.status(400).json({ success: false, message: '점검할 웹사이트 URL을 입력해 주세요.' });
     }
     try {
-        const result = await detectEngine.start(url.trim(), {
+        const targetUrl = url.trim();
+        let excludedHistoryUrls = [];
+        let validatedHistoryMasterId = null;
+
+        if (excludeHistoryMasterId !== null && excludeHistoryMasterId !== undefined && excludeHistoryMasterId !== '') {
+            const historyMasterId = Number(excludeHistoryMasterId);
+            if (!Number.isSafeInteger(historyMasterId) || historyMasterId <= 0) {
+                return res.status(400).json({ success: false, message: '제외할 이전 탐지 이력이 올바르지 않습니다.' });
+            }
+
+            const historyMasterRes = await commonDAO.selectList('detectMapper.selectDetectMaster', { id: historyMasterId });
+            const historyMaster = historyMasterRes && historyMasterRes.list ? historyMasterRes.list[0] : null;
+            if (!historyMaster) {
+                return res.status(404).json({ success: false, message: '제외할 이전 탐지 이력을 찾을 수 없습니다.' });
+            }
+
+            const targetHost = new URL(targetUrl).hostname.toLowerCase().replace(/^www\./, '');
+            const historyHost = new URL(historyMaster.entry_url).hostname.toLowerCase().replace(/^www\./, '');
+            if (targetHost !== historyHost) {
+                return res.status(400).json({ success: false, message: '현재 사이트와 다른 사이트의 탐지 이력은 제외 기준으로 사용할 수 없습니다.' });
+            }
+
+            const historyUrlsRes = await commonDAO.selectList('detectMapper.selectDetectHistoryUrls', { master_id: historyMasterId });
+            excludedHistoryUrls = (historyUrlsRes && historyUrlsRes.list ? historyUrlsRes.list : [])
+                .map(row => String((row && row.url) || '').trim())
+                .filter(Boolean);
+            validatedHistoryMasterId = historyMasterId;
+        }
+
+        const result = await detectEngine.start(targetUrl, {
             speedDelayMs: Number(speedDelayMs) || 500,
             maxPages: Number(maxPages) || 5000,
             maxTimeSec: Number(maxTimeSec) || 1800,
             tempPollutedKeywords: Array.isArray(tempPollutedKeywords) ? tempPollutedKeywords : [],
             tempAllowedKeywords: Array.isArray(tempAllowedKeywords) ? tempAllowedKeywords : [],
             knownSearchUrls: Array.isArray(knownSearchUrls) ? knownSearchUrls : [],
-            knownSearchCompleted: knownSearchCompleted === true
+            knownSearchCompleted: knownSearchCompleted === true,
+            excludeHistoryMasterId: validatedHistoryMasterId,
+            excludedHistoryUrls
         });
         res.json({ success: true, message: '점검이 시작되었습니다.', data: result });
     } catch (err) {
@@ -825,6 +864,31 @@ router.get('/api/spam', checkPermission, asyncReqHandler(async function(req, res
     });
 }));
 
+// 3. 스팸 패턴 개별 등록 및 즉시 벡터 메모리 적재 API
+router.post('/api/spam', checkPermission, asyncReqHandler(async function(req, res) {
+    try {
+        const result = await spamTrainService.registerSingleSpamPattern(req.body && req.body.spam_text);
+
+        if (!result.success) {
+            const statusCode = result.code === 'DUPLICATE'
+                ? 409
+                : (result.code === 'MODEL_NOT_READY' ? 503 : 400);
+            return res.status(statusCode).json(result);
+        }
+
+        return res.status(201).json({
+            ...result,
+            message: '스팸 패턴을 벡터화하여 DB와 메모리에 등록했습니다.'
+        });
+    } catch (err) {
+        console.error('[Single Spam Register Error]', err);
+        return res.status(500).json({
+            success: false,
+            message: '개별 패턴 등록 중 오류가 발생했습니다: ' + err.message
+        });
+    }
+}));
+
 // 따옴표 내부의 줄바꿈 및 쉼표를 온전히 처리하는 정밀 CSV 파서
 function parseCsvRows(text) {
     const rows = [];
@@ -867,7 +931,7 @@ function parseCsvRows(text) {
     return rows;
 }
 
-// 3. 샘플 CSV 양식 다운로드 API (허깅페이스 버전 및 표준형 지원, UTF-8 BOM)
+// 4. 샘플 CSV 양식 다운로드 API (허깅페이스 버전 및 표준형 지원, UTF-8 BOM)
 router.get('/api/spam/sample-csv', checkPermission, (req, res) => {
     const bom = '\uFEFF';
     const type = String(req.query.type || 'huggingface').toLowerCase();
@@ -907,7 +971,7 @@ router.get('/api/spam/sample-csv', checkPermission, (req, res) => {
     res.send(hfCsvContent);
 });
 
-// 4. CSV 일괄 업로드 및 실시간 AI 벡터화 API (허깅페이스 index,content,class 및 표준형 완벽 자동 판별)
+// 5. CSV 일괄 업로드 및 실시간 AI 벡터화 API (허깅페이스 index,content,class 및 표준형 완벽 자동 판별)
 router.post('/api/spam/upload', checkPermission, (req, res, next) => {
     spamUpload.single('csvFile')(req, res, (err) => {
         if (err) {
@@ -1017,7 +1081,7 @@ router.get('/api/spam/train-status', checkPermission, (req, res) => {
     });
 });
 
-// 5. 스팸 패턴 단건 삭제 API
+// 6. 스팸 패턴 단건 삭제 API
 router.delete('/api/spam/:id', checkPermission, asyncReqHandler(async function(req, res) {
     const id = Number(req.params.id);
     if (!id) {

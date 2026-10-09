@@ -20,7 +20,9 @@ function loadMappers() {
 }
 
 function makeBoundSql(namespace, id, paramObj) {
-  const originalSql = mybatisMapper.getStatement(namespace, id, paramObj || {});
+  let originalSql = mybatisMapper.getStatement(namespace, id, paramObj || {});
+  // mybatis-mapper 라이브러리가 파라미터 값의 % 문자를 MySQL용으로 \\% 치환하는 것을 SQLite에 맞게 복원
+  originalSql = originalSql.replace(/\\%/g, '%');
   const values = [];
   const sql = originalSql.replace(/#\{(\w+)\}/g, (_, key) => {
     const val = paramObj ? paramObj[key] : null;

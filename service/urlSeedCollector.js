@@ -298,7 +298,7 @@ async function fetchDuckDuckGoDorkUrls(domain, entryUrl, keywords = ['카톡', '
           successfulResponses++;
           console.log(`[UrlSeedCollector] DuckDuckGo ${source.name} 결과 링크: ${links.size}개`);
           for (const url of links) {
-            result.set(url, { linkText: '[DuckDuckGo] 검색엔진 색인 URL', isDorkTarget: true, riskScore: 90 });
+            result.set(url, { linkText: '[노출된 색인] 검색엔진 색인 URL', isDorkTarget: true, riskScore: 90 });
           }
         } catch (error) {
           logWrite(config.paths.logsDir, {

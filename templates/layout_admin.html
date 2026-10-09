@@ -172,200 +172,83 @@
 
 		.llm-runner-stage {
 			position: relative;
-			height: 92px;
+			height: 112px;
 			margin: -7px 0 8px;
 			overflow: hidden;
 			border-bottom: 1px solid var(--bs-border-color);
 			background:
-				radial-gradient(circle at 20% 85%, rgba(13, 110, 253, 0.10), transparent 42%),
-				linear-gradient(180deg, transparent 72%, rgba(100, 116, 139, 0.05));
-		}
-
-		.llm-runner-track {
-			position: absolute;
-			left: 0;
-			right: 0;
-			bottom: 7px;
-			height: 2px;
-			background: repeating-linear-gradient(90deg,
-				var(--bs-border-color) 0 9px,
-				transparent 9px 16px);
+				radial-gradient(circle at 25% 84%, rgba(13, 110, 253, 0.11), transparent 44%),
+				linear-gradient(180deg, transparent 74%, rgba(100, 116, 139, 0.05));
 		}
 
 		.llm-runner-pack {
 			position: absolute;
 			left: 5%;
-			bottom: 7px;
-			width: min(190px, 82%);
-			height: 82px;
+			bottom: 2px;
+			width: min(292px, 96%);
+			aspect-ratio: 8 / 3;
 			transform: translateX(-5%);
 			transition: left 0.65s ease, transform 0.65s ease;
 			will-change: left, transform;
 		}
 
-		.llm-runner-scene {
+		.llm-runner-layer {
+			position: absolute;
+			inset: 0;
 			display: block;
 			width: 100%;
 			height: 100%;
-			overflow: visible;
-			filter: drop-shadow(0 3px 2px rgba(15, 23, 42, 0.16));
-		}
-
-		.llm-robot-body {
-			transform-box: fill-box;
+			object-fit: contain;
+			object-position: center;
+			pointer-events: none;
+			user-select: none;
 			transform-origin: center bottom;
-			animation: llm-robot-bob 0.36s ease-in-out infinite alternate;
+			filter: drop-shadow(0 3px 2px rgba(15, 23, 42, 0.18));
 		}
 
-		.llm-robot-head {
-			transform-box: fill-box;
-			transform-origin: 42% 90%;
-			animation: llm-head-look 1.1s ease-in-out infinite alternate;
+		.llm-runner-robot {
+			clip-path: inset(0 56% 0 0);
+			animation: llm-runner-bob 0.42s ease-in-out infinite alternate;
 		}
 
-		.llm-robot-eye-light {
-			animation: llm-eye-blink 2.3s steps(1, end) infinite;
+		.llm-runner-spammer-one {
+			clip-path: inset(0 35% 0 44%);
+			animation: llm-spammer-wave 0.62s -0.12s ease-in-out infinite alternate;
 		}
 
-		.llm-robot-beacon {
-			animation: llm-beacon-pulse 0.72s ease-in-out infinite alternate;
+		.llm-runner-spammer-two {
+			clip-path: inset(0 17% 0 65%);
+			animation: llm-spammer-wave 0.68s -0.36s ease-in-out infinite alternate;
 		}
 
-		.llm-robot-arm-back,
-		.llm-robot-arm-front,
-		.llm-robot-leg-left,
-		.llm-robot-leg-right {
-			transform-box: fill-box;
-			transform-origin: center top;
+		.llm-runner-spammer-three {
+			clip-path: inset(0 0 0 83%);
+			animation: llm-spammer-wave 0.58s -0.24s ease-in-out infinite alternate;
 		}
 
-		.llm-robot-arm-back,
-		.llm-robot-leg-right {
-			animation: llm-limb-back 0.38s ease-in-out infinite alternate;
+		.llm-load-error .llm-runner-layer {
+			animation-play-state: paused;
+			filter: grayscale(0.45) drop-shadow(0 3px 2px rgba(220, 53, 69, 0.22));
 		}
 
-		.llm-robot-arm-front,
-		.llm-robot-leg-left {
-			animation: llm-limb-front 0.38s ease-in-out infinite alternate;
-		}
-
-		.llm-robot-magnifier {
-			transform-box: fill-box;
-			transform-origin: left top;
-			animation: llm-magnifier-scan 0.8s ease-in-out infinite alternate;
-		}
-
-		.llm-mail-one,
-		.llm-mail-two,
-		.llm-mail-three {
-			transform-box: fill-box;
-			transform-origin: center;
-		}
-
-		.llm-mail-one {
-			animation: llm-mail-flight 0.48s ease-in-out infinite alternate;
-		}
-
-		.llm-mail-two {
-			animation: llm-mail-flight 0.55s -0.26s ease-in-out infinite alternate;
-		}
-
-		.llm-mail-three {
-			animation: llm-mail-flight 0.42s -0.12s ease-in-out infinite alternate;
-		}
-
-		.llm-mail-flap {
-			transform-box: fill-box;
-			transform-origin: center top;
-			animation: llm-flap-wave 0.34s ease-in-out infinite alternate;
-		}
-
-		.llm-speed-line {
-			stroke-dasharray: 13 10;
-			animation: llm-speed-dash 0.55s linear infinite;
-		}
-
-		.llm-dust {
-			transform-box: fill-box;
-			transform-origin: center;
-			animation: llm-dust-pop 0.75s ease-out infinite;
-		}
-
-		.llm-dust-two {
-			animation-delay: -0.38s;
-		}
-
-		.llm-load-error .llm-runner-scene * {
-			animation-play-state: paused !important;
-		}
-
-		.llm-load-error .llm-robot-shell {
-			fill: var(--bs-danger);
-		}
-
-		@keyframes llm-robot-bob {
+		@keyframes llm-runner-bob {
 			from {
-				transform: translateY(0) rotate(-1deg);
+				transform: translateY(1px) rotate(-0.25deg);
 			}
 
 			to {
-				transform: translateY(-4px) rotate(1deg);
+				transform: translateY(-3px) rotate(0.25deg);
 			}
 		}
 
-		@keyframes llm-head-look {
+		@keyframes llm-spammer-wave {
 			from {
-				transform: rotate(-2deg);
+				transform: translateY(-4px) rotate(-0.6deg);
 			}
 
 			to {
-				transform: rotate(4deg) translateY(-1px);
+				transform: translateY(4px) rotate(0.6deg);
 			}
-		}
-
-		@keyframes llm-eye-blink {
-			0%, 46%, 52%, 100% { transform: scaleY(1); }
-			48%, 50% { transform: scaleY(0.15); }
-		}
-
-		@keyframes llm-beacon-pulse {
-			from { opacity: 0.35; transform: scale(0.82); }
-			to { opacity: 1; transform: scale(1.16); }
-		}
-
-		@keyframes llm-limb-front {
-			from { transform: rotate(22deg); }
-			to { transform: rotate(-24deg); }
-		}
-
-		@keyframes llm-limb-back {
-			from { transform: rotate(-24deg); }
-			to { transform: rotate(22deg); }
-		}
-
-		@keyframes llm-magnifier-scan {
-			from { transform: rotate(-10deg); }
-			to { transform: rotate(9deg) translateY(-2px); }
-		}
-
-		@keyframes llm-mail-flight {
-			from { transform: translateY(2px) rotate(-5deg); }
-			to { transform: translateY(-8px) rotate(5deg); }
-		}
-
-		@keyframes llm-flap-wave {
-			from { transform: rotateX(0deg); }
-			to { transform: rotateX(42deg); }
-		}
-
-		@keyframes llm-speed-dash {
-			to { stroke-dashoffset: -23; }
-		}
-
-		@keyframes llm-dust-pop {
-			0% { opacity: 0; transform: translate(5px, 0) scale(0.35); }
-			35% { opacity: 0.7; }
-			100% { opacity: 0; transform: translate(-13px, -7px) scale(1.35); }
 		}
 
 		@media (prefers-reduced-motion: reduce) {
@@ -373,7 +256,7 @@
 				transition: none;
 			}
 
-			.llm-runner-scene * {
+			.llm-runner-layer {
 				animation: none;
 			}
 		}
@@ -584,48 +467,11 @@
 			class="position-fixed bottom-0 end-0 m-3 p-3 bg-body border rounded-3 shadow-lg d-none"
 			style="z-index: 1060; width: 330px; max-width: calc(100vw - 30px); transition: opacity 0.4s ease;">
 			<div class="llm-runner-stage" aria-hidden="true">
-				<div class="llm-runner-track"></div>
 				<div id="llm-runner-pack" class="llm-runner-pack">
-					<svg class="llm-runner-scene" viewBox="0 0 190 86" role="presentation">
-						<defs>
-							<linearGradient id="llm-robot-blue" x1="0" y1="0" x2="1" y2="1">
-								<stop offset="0" stop-color="#48b4ff" />
-								<stop offset="0.55" stop-color="#087cf0" />
-								<stop offset="1" stop-color="#0753b7" />
-							</linearGradient>
-							<linearGradient id="llm-mail-gold" x1="0" y1="0" x2="0" y2="1">
-								<stop offset="0" stop-color="#ffe082" />
-								<stop offset="1" stop-color="#f59e0b" />
-							</linearGradient>
-						</defs>
-						<g fill="none" stroke="#78b9ff" stroke-width="2" stroke-linecap="round" opacity="0.65">
-							<path class="llm-speed-line" d="M86 27h31" />
-							<path class="llm-speed-line" d="M91 36h22" />
-							<path class="llm-speed-line" d="M83 47h29" />
-						</g>
-						<ellipse cx="42" cy="79" rx="27" ry="4" fill="#0f172a" opacity="0.16" />
-						<circle class="llm-dust" cx="17" cy="72" r="3" fill="#94a3b8" opacity="0" />
-						<circle class="llm-dust llm-dust-two" cx="25" cy="76" r="2.4" fill="#94a3b8" opacity="0" />
-						<g class="llm-robot-body">
-							<g class="llm-robot-arm-back" fill="none" stroke="#0753b7" stroke-width="7" stroke-linecap="round"><path d="M27 45c-12 4-14 13-7 20" /></g>
-							<g class="llm-robot-leg-right" fill="none" stroke="#1e3a8a" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"><path d="M46 64l11 10 10-2" /></g>
-							<g class="llm-robot-leg-left" fill="none" stroke="#087cf0" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"><path d="M35 64L25 75l-10-1" /></g>
-							<rect class="llm-robot-shell" x="22" y="36" width="43" height="31" rx="12" fill="url(#llm-robot-blue)" />
-							<rect x="31" y="44" width="25" height="14" rx="5" fill="#e6f5ff" opacity="0.92" />
-							<circle cx="38" cy="51" r="2.2" fill="#22c55e" /><rect x="43" y="49" width="8" height="3" rx="1.5" fill="#60a5fa" />
-							<g class="llm-robot-head">
-								<path d="M34 13l3-7h12l4 7" fill="#334155" /><rect x="28" y="10" width="31" height="5" rx="2.5" fill="#334155" />
-								<rect x="18" y="14" width="49" height="31" rx="11" fill="url(#llm-robot-blue)" /><rect x="24" y="20" width="37" height="19" rx="8" fill="#eaf7ff" />
-								<g class="llm-robot-eye-light" fill="#0753b7"><circle cx="35" cy="29" r="3.3" /><circle cx="50" cy="29" r="3.3" /></g>
-								<path d="M37 36c4 2 8 2 12 0" fill="none" stroke="#0753b7" stroke-width="2" stroke-linecap="round" /><circle class="llm-robot-beacon" cx="43" cy="6" r="3.5" fill="#ef4444" />
-							</g>
-							<g class="llm-robot-arm-front" fill="none" stroke="#087cf0" stroke-width="7" stroke-linecap="round"><path d="M61 44c11 1 14 8 18 13" /></g>
-							<g class="llm-robot-magnifier" fill="none" stroke="#334155" stroke-linecap="round"><circle cx="83" cy="58" r="8" stroke-width="4" fill="#dff3ff" fill-opacity="0.65" /><path d="M77 64l-8 8" stroke-width="5" /><path d="M79 54c2-2 5-2 7 0" stroke="#ffffff" stroke-width="1.7" opacity="0.9" /></g>
-						</g>
-						<g class="llm-mail-one"><rect x="106" y="27" width="29" height="21" rx="4" fill="url(#llm-mail-gold)" stroke="#d97706" stroke-width="1.5" /><path class="llm-mail-flap" d="M108 30l12.5 10L133 30" fill="#ffecb5" stroke="#d97706" stroke-width="1.5" stroke-linejoin="round" /><circle cx="130" cy="44" r="5" fill="#ef4444" /><path d="M128 42l4 4m0-4l-4 4" stroke="#fff" stroke-width="1.5" stroke-linecap="round" /></g>
-						<g class="llm-mail-two"><rect x="139" y="18" width="23" height="17" rx="3" fill="url(#llm-mail-gold)" stroke="#d97706" stroke-width="1.4" /><path class="llm-mail-flap" d="M141 20l9.5 8 9.5-8" fill="#fff0bd" stroke="#d97706" stroke-width="1.3" /></g>
-						<g class="llm-mail-three"><rect x="164" y="39" width="19" height="14" rx="3" fill="url(#llm-mail-gold)" stroke="#d97706" stroke-width="1.3" /><path class="llm-mail-flap" d="M166 41l7.5 6 7.5-6" fill="#fff0bd" stroke="#d97706" stroke-width="1.2" /></g>
-					</svg>
+					<img class="llm-runner-layer llm-runner-robot" src="/assets/img/llm-runner.png" alt="" draggable="false">
+					<img class="llm-runner-layer llm-runner-spammer-one" src="/assets/img/llm-runner.png" alt="" draggable="false">
+					<img class="llm-runner-layer llm-runner-spammer-two" src="/assets/img/llm-runner.png" alt="" draggable="false">
+					<img class="llm-runner-layer llm-runner-spammer-three" src="/assets/img/llm-runner.png" alt="" draggable="false">
 				</div>
 			</div>
 			<div class="d-flex align-items-center justify-content-between mb-2">

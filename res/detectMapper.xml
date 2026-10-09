@@ -132,6 +132,17 @@
     ORDER BY id ASC
   </select>
 
+  <!-- 이전 탐지에서 방문하거나 위반이 발견된 URL 조회 -->
+  <select id="selectDetectHistoryUrls">
+    SELECT DISTINCT url
+    FROM (
+      SELECT url FROM t_detect_node WHERE master_id = #{master_id}
+      UNION ALL
+      SELECT url FROM t_detect_list WHERE master_id = #{master_id}
+    ) AS history_urls
+    WHERE url IS NOT NULL AND TRIM(url) != ''
+  </select>
+
   <!-- 대시보드 점검 마스터 총 건수 조회 (검색 필터 지원) -->
   <select id="selectDetectMasterCount">
     SELECT COUNT(*) AS total_count

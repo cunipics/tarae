@@ -107,6 +107,20 @@
           </div>
         </form>
       </div>
+      <div class="card-footer bg-body border-top py-3">
+        <form id="spam-single-form" onsubmit="registerSingleSpam(event)">
+          <label for="spam-single-text" class="form-label h5 fw-bold mb-2">
+            <i class="bi bi-plus-circle me-2 text-primary"></i>개별 등록
+          </label>
+          <div class="input-group">
+            <input type="text" id="spam-single-text" class="form-control" maxlength="2000" autocomplete="off" placeholder="벡터화하여 등록할 스팸 패턴을 입력하세요">
+            <button type="submit" class="btn btn-primary fw-semibold px-4" id="btn-single-register">
+              등록
+            </button>
+          </div>
+          <div id="spam-single-feedback" class="form-text" role="status" aria-live="polite"></div>
+        </form>
+      </div>
     </div>
 
     <!-- 2. 하단: 업로드된 스팸 패턴 목록 (게시판 형태) -->
@@ -416,6 +430,56 @@
       console.error('[Upload Error]', err);
       alert('업로드 중 오류가 발생했습니다: ' + err.message);
       uploadBtn.removeAttribute('disabled');
+    }
+  }
+
+  // 스팸 패턴 개별 벡터 등록
+  async function registerSingleSpam(event) {
+    event.preventDefault();
+
+    const input = document.getElementById('spam-single-text');
+    const button = document.getElementById('btn-single-register');
+    const feedback = document.getElementById('spam-single-feedback');
+    const spamText = input.value.trim();
+
+    if (spamText.length < 2) {
+      feedback.className = 'form-text text-danger';
+      feedback.textContent = '두 글자 이상의 패턴을 입력해 주세요.';
+      input.focus();
+      return;
+    }
+
+    input.disabled = true;
+    button.disabled = true;
+    button.innerHTML = '<span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>벡터 생성 중';
+    feedback.className = 'form-text text-secondary';
+    feedback.textContent = 'AI 유사도 모델로 패턴 벡터를 생성하고 있습니다.';
+
+    try {
+      const res = await fetch('/mgr/api/spam', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ spam_text: spamText })
+      });
+      const result = await res.json();
+
+      if (!res.ok || !result.success) {
+        throw new Error(result.message || '개별 등록에 실패했습니다.');
+      }
+
+      input.value = '';
+      feedback.className = 'form-text text-success fw-semibold';
+      feedback.textContent = `${result.message} 현재 메모리 적재: ${Number(result.memoryCount || 0).toLocaleString()}건`;
+      await fetchSpamList(1);
+    } catch (err) {
+      console.error('[Single Spam Register Error]', err);
+      feedback.className = 'form-text text-danger';
+      feedback.textContent = err.message;
+    } finally {
+      input.disabled = false;
+      button.disabled = false;
+      button.textContent = '등록';
+      input.focus();
     }
   }
 

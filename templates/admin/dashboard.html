@@ -69,13 +69,13 @@
           <div class="card-body">
             <p class="text-secondary small mb-1">4대 필수 은닉 기법 탐지</p>
             <% 
-              const safeTech = (typeof techStats !== 'undefined' && techStats) ? techStats : { JAMO: 0, HOMOGLYPH: 0, TRANSPARENT: 0, OFFSCREEN: 0, ETC: 0 };
+              const safeTech = (typeof techStats !== 'undefined' && techStats) ? techStats : { JAMO: 0, HOMOGLYPH: 0, TRANSPARENT: 0, OFFSCREEN: 0, ETC: 0, NONSTANDARD_PORT: 0, REFLECTED_SEARCH: 0 };
               const total4Tech = (safeTech.JAMO || 0) + (safeTech.HOMOGLYPH || 0) + (safeTech.TRANSPARENT || 0) + (safeTech.OFFSCREEN || 0);
             %>
             <h3 class="mb-0 fw-bold <%= total4Tech > 0 ? 'text-warning' : 'text-secondary' %>">
               <%= total4Tech %> <span class="fs-6 fw-normal text-secondary">건 분류</span>
             </h3>
-            <small class="text-warning">자모(<%= safeTech.JAMO || 0 %>)·닮은꼴(<%= safeTech.HOMOGLYPH || 0 %>)·투명(<%= safeTech.TRANSPARENT || 0 %>)·화면밖(<%= safeTech.OFFSCREEN || 0 %>)<%= (safeTech.ETC && safeTech.ETC > 0) ? '·기타(' + safeTech.ETC + ')' : '' %></small>
+            <small class="text-warning">자모(<%= safeTech.JAMO || 0 %>)·닮은꼴(<%= safeTech.HOMOGLYPH || 0 %>)·투명(<%= safeTech.TRANSPARENT || 0 %>)·화면밖(<%= safeTech.OFFSCREEN || 0 %>)<%= (safeTech.ETC && safeTech.ETC > 0) ? '·기타(' + safeTech.ETC + ')' : '' %><%= (safeTech.NONSTANDARD_PORT && safeTech.NONSTANDARD_PORT > 0) ? '·비표준포트오염(' + safeTech.NONSTANDARD_PORT + ')' : '' %><%= (safeTech.REFLECTED_SEARCH && safeTech.REFLECTED_SEARCH > 0) ? '·반사형검색오염(' + safeTech.REFLECTED_SEARCH + ')' : '' %></small>
           </div>
         </div>
       </div>

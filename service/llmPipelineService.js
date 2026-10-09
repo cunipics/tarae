@@ -9,6 +9,8 @@
 
 const aiConfig = require('../config/aiModel.config');
 const { splitTextForTranslation } = require('../utils/translationText');
+const fs = require('fs');
+const path = require('path');
 
 let transformersModule = null;
 
@@ -74,6 +76,13 @@ const GAMBLING_ANCHOR_SENTENCES = [
 async function getTransformers() {
   if (!transformersModule) {
     transformersModule = await import('@huggingface/transformers');
+    const configuredCacheDir = String(process.env.TARAE_MODEL_CACHE_DIR || '').trim();
+    if (configuredCacheDir) {
+      const resolvedCacheDir = path.resolve(configuredCacheDir);
+      fs.mkdirSync(resolvedCacheDir, { recursive: true });
+      transformersModule.env.cacheDir = resolvedCacheDir;
+      transformersModule.env.useFSCache = true;
+    }
     // CPU 멀티스레드 최적화 (4스레드)
     if (transformersModule.env && transformersModule.env.backends && transformersModule.env.backends.onnx) {
       transformersModule.env.backends.onnx.wasm = transformersModule.env.backends.onnx.wasm || {};
@@ -489,6 +498,9 @@ const sentenceResultCache = new Map();
 const memoTranslationCache = new Map();
 const MAX_SENTENCE_RESULT_CACHE_SIZE = 2000;
 const MAX_MEMO_TRANSLATION_CACHE_SIZE = 500;
+// 이 점수부터는 유사도 자체를 강한 스팸 근거로 사용한다.
+// 0.70 이상 0.85 미만은 계속 LLM이 확인하되 유사도만으로 위반을 확정하지 않는다.
+const SIMILARITY_AUTO_BLOCK_THRESHOLD = 0.85;
 
 function clearSentenceCache() {
   sentenceResultCache.clear();
@@ -619,7 +631,7 @@ async function classifyText(koreanText, context = {}) {
 
   // [1단계: dragonkue 유사도 모델 연산]
   // 앵커 벡터와의 코사인 유사도를 측정하며, 저유사도(<0.55)라고 해서 절대 독단적으로 정상 처리하지 않음 (스팸은 난수표식 키워드 나열이 많으므로)
-  const isHighSimSpam = maxSimilarity >= 0.75;
+  const isHighSimSpam = maxSimilarity >= SIMILARITY_AUTO_BLOCK_THRESHOLD;
 
   // [2단계] 한국어 -> 영어 번역
   let englishText = raw;
@@ -800,13 +812,13 @@ NORMAL: [brief reason]`;
       }
     } catch (llmErr) {
       console.warn('[LLM Inference Error]', llmErr.message);
-      if (maxSimilarity >= 0.80) {
+      if (maxSimilarity >= SIMILARITY_AUTO_BLOCK_THRESHOLD) {
         isViolation = true;
-        reason = '문맥 벡터 유사도 고위험 임계치(0.80) 초과로 위반 감지';
+        reason = `문맥 벡터 유사도 고위험 임계치(${SIMILARITY_AUTO_BLOCK_THRESHOLD.toFixed(2)}) 이상으로 위반 감지`;
       }
     }
   } else {
-    if (maxSimilarity >= 0.80) {
+    if (maxSimilarity >= SIMILARITY_AUTO_BLOCK_THRESHOLD) {
       isViolation = true;
       reason = '문맥 벡터 유사도 임계치 초과';
     }

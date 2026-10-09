@@ -10,6 +10,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const htmlparser2 = require('htmlparser2');
 const domutils = require('domutils');
 const commonDAO = require('./commonDAO');
@@ -44,6 +45,8 @@ const {
   conservativePageDurationMs,
   estimateRemainingCapacity,
   planBoardSampling,
+  getBoardPriorityWeight,
+  applyBoardPriorityWeight,
   partitionInOrder
 } = require('./crawlScheduler');
 
@@ -79,6 +82,183 @@ function isSameDomain(urlA, urlB) {
   } catch (e) {
     return false;
   }
+}
+
+function getNonstandardPort(urlValue) {
+  try {
+    const parsed = new URL(urlValue);
+    if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.port) return null;
+    const standardPort = parsed.protocol === 'https:' ? '443' : '80';
+    return parsed.port === standardPort ? null : parsed.port;
+  } catch (e) {
+    return null;
+  }
+}
+
+function decodeHtmlBuffer(buffer, contentType = '') {
+  let encoding = 'utf-8';
+  const charsetMatch = String(contentType).match(/charset=([a-zA-Z0-9_-]+)/i);
+  if (charsetMatch && charsetMatch[1]) {
+    encoding = charsetMatch[1].toLowerCase();
+  } else {
+    const snippet = buffer.subarray(0, 2048).toString('ascii');
+    const metaCharsetMatch = snippet.match(/<meta[^>]*charset=["']?([a-zA-Z0-9_-]+)/i) ||
+      snippet.match(/<meta[^>]*http-equiv=["']?Content-Type["']?[^>]*content=["'][^"']*charset=([a-zA-Z0-9_-]+)/i);
+    if (metaCharsetMatch && metaCharsetMatch[1]) encoding = metaCharsetMatch[1].toLowerCase();
+  }
+
+  if (encoding.includes('euc-kr') || encoding.includes('cp949') || encoding.includes('korean') || encoding.includes('ks_c_5601')) {
+    try {
+      return iconv ? iconv.decode(buffer, 'cp949') : new TextDecoder('euc-kr').decode(buffer);
+    } catch (e) {}
+  }
+  return buffer.toString('utf-8');
+}
+
+function extractGetSearchForms(dom, pageUrl) {
+  if (!dom || !Array.isArray(dom.children)) return [];
+  const forms = domutils.findAll(el => el.type === 'tag' && el.name === 'form', dom.children);
+  const specs = [];
+
+  for (const form of forms) {
+    const attrs = form.attribs || {};
+    const method = String(attrs.method || 'get').trim().toLowerCase();
+    if (method !== 'get') continue;
+
+    let actionUrl;
+    try {
+      actionUrl = new URL(attrs.action || pageUrl, pageUrl);
+    } catch (e) {
+      continue;
+    }
+    if (!isSameDomain(actionUrl.href, pageUrl)) continue;
+
+    const controls = domutils.findAll(
+      el => el.type === 'tag' && ['input', 'select', 'button'].includes(el.name),
+      form.children || []
+    );
+    const hasPassword = controls.some(el => el.name === 'input' && String((el.attribs || {}).type || '').toLowerCase() === 'password');
+    if (hasPassword) continue;
+
+    const formText = (domutils.getText(form) || '').replace(/\s+/g, ' ').trim();
+    const signalText = [
+      attrs.role,
+      attrs.id,
+      attrs.class,
+      attrs['aria-label'],
+      actionUrl.pathname,
+      formText,
+      ...controls.flatMap(el => {
+        const controlAttrs = el.attribs || {};
+        return [controlAttrs.type, controlAttrs.name, controlAttrs.id, controlAttrs.placeholder, controlAttrs.value, controlAttrs['aria-label']];
+      })
+    ].filter(Boolean).join(' ');
+
+    const textInputs = controls.filter(el => {
+      if (el.name !== 'input') return false;
+      const inputAttrs = el.attribs || {};
+      const type = String(inputAttrs.type || 'text').toLowerCase();
+      return Boolean(inputAttrs.name) && (type === 'search' || type === 'text');
+    });
+    const explicitSearchInput = textInputs.find(el => String((el.attribs || {}).type || '').toLowerCase() === 'search');
+    const hasSearchSignal = Boolean(explicitSearchInput) || /(?:검색|찾기|search|find|query)/i.test(signalText);
+    if (!hasSearchSignal || textInputs.length === 0) continue;
+
+    const searchInput = explicitSearchInput || textInputs.find(el => {
+      const inputAttrs = el.attribs || {};
+      return /(?:검색|search|query|keyword|term|word|text)/i.test([
+        inputAttrs.name,
+        inputAttrs.id,
+        inputAttrs.placeholder,
+        inputAttrs['aria-label']
+      ].filter(Boolean).join(' '));
+    }) || (textInputs.length === 1 ? textInputs[0] : null);
+    if (!searchInput) continue;
+
+    const fixedParams = [];
+    for (const control of controls) {
+      const controlAttrs = control.attribs || {};
+      const name = String(controlAttrs.name || '').trim();
+      if (!name || name === searchInput.attribs.name || control.name === 'button') continue;
+
+      if (control.name === 'input') {
+        const type = String(controlAttrs.type || 'text').toLowerCase();
+        if (['submit', 'button', 'reset', 'file', 'password'].includes(type)) continue;
+        if ((type === 'checkbox' || type === 'radio') && !Object.prototype.hasOwnProperty.call(controlAttrs, 'checked')) continue;
+        fixedParams.push([name, String(controlAttrs.value || '')]);
+      } else if (control.name === 'select') {
+        const options = domutils.findAll(el => el.type === 'tag' && el.name === 'option', control.children || []);
+        const selected = options.find(option => Object.prototype.hasOwnProperty.call(option.attribs || {}, 'selected')) || options[0];
+        if (selected) fixedParams.push([name, String((selected.attribs || {}).value || domutils.getText(selected) || '')]);
+      }
+    }
+
+    const signatureParams = fixedParams
+      .map(([key, value]) => `${key}=${value}`)
+      .sort()
+      .join('&');
+    const searchParam = String(searchInput.attribs.name);
+    const signature = `${actionUrl.origin}${actionUrl.pathname}|${searchParam}|${signatureParams}`;
+    specs.push({
+      actionUrl: actionUrl.href,
+      searchParam,
+      fixedParams,
+      signature
+    });
+  }
+
+  const unique = new Map();
+  for (const spec of specs) {
+    if (!unique.has(spec.signature)) unique.set(spec.signature, spec);
+  }
+  return [...unique.values()];
+}
+
+function selectReflectionProbePattern(patterns) {
+  const candidates = (Array.isArray(patterns) ? patterns : [])
+    .map(value => String(value || '').trim())
+    .filter(value => value.length >= 3 && value.length <= 30 && !/[\r\n]/.test(value));
+  return candidates.find(value => /[ㄱ-ㅎㅏ-ㅣ]/.test(value)) || candidates[0] || null;
+}
+
+function buildReflectionProbeUrl(spec, payload) {
+  const target = new URL(spec.actionUrl);
+  for (const [key, value] of spec.fixedParams || []) target.searchParams.set(key, value);
+  target.searchParams.set(spec.searchParam, payload);
+  return target.href;
+}
+
+function inspectReflectedProbeHtml(html, payload, responseHeaders = null, responseUrl = '') {
+  const dom = htmlparser2.parseDocument(String(html || ''));
+  const visibleText = (domutils.getText(dom.children) || '').replace(/\s+/g, ' ').trim();
+  const reflected = visibleText.includes(payload);
+
+  const robotsMeta = domutils.findAll(el => {
+    if (el.type !== 'tag' || el.name !== 'meta' || !el.attribs) return false;
+    const name = String(el.attribs.name || '').toLowerCase();
+    return name === 'robots' || name === 'googlebot';
+  }, dom.children);
+  const metaNoindex = robotsMeta.some(el => /(?:^|[,\s])noindex(?:$|[,\s])/i.test(String(el.attribs.content || '')));
+  const headerNoindex = responseHeaders && typeof responseHeaders.get === 'function'
+    ? /(?:^|[,\s])noindex(?:$|[,\s])/i.test(String(responseHeaders.get('x-robots-tag') || ''))
+    : false;
+
+  let canonicalLimited = false;
+  const canonical = domutils.findOne(el => el.type === 'tag' && el.name === 'link' && el.attribs &&
+    String(el.attribs.rel || '').toLowerCase().split(/\s+/).includes('canonical') && el.attribs.href, dom.children);
+  if (canonical && responseUrl) {
+    try {
+      const canonicalUrl = new URL(canonical.attribs.href, responseUrl);
+      canonicalLimited = !canonicalUrl.search.includes(encodeURIComponent(payload)) && !canonicalUrl.search.includes(payload);
+    } catch (e) {}
+  }
+
+  return {
+    reflected,
+    visibleText,
+    indexLimited: metaNoindex || headerNoindex || canonicalLimited,
+    limitReason: metaNoindex || headerNoindex ? 'noindex' : (canonicalLimited ? 'canonical' : '')
+  };
 }
 
 // 클라이언트 사이드 포워딩(JS 이동, 메타 새로고침) 대상 URL 추출 함수
@@ -422,6 +602,26 @@ function isNonContentLink(urlStr, linkElem = null) {
   }
 }
 
+// 문서가 불러오는 정적 리소스와 사용자가 이동할 수 있는 링크를 DOM 구조로 구분
+function isNavigableLinkElement(el) {
+  if (!el || el.type !== 'tag') return false;
+
+  const tagName = String(el.name || '').toLowerCase();
+  const attribs = el.attribs || {};
+
+  // CSS, 스크립트, 글꼴, 미디어 등을 불러오는 태그는 페이지 이동 링크가 아님
+  if (['link', 'base', 'script', 'style', 'img', 'source', 'track', 'video', 'audio', 'object', 'embed'].includes(tagName)) {
+    return false;
+  }
+
+  if (tagName === 'a' || tagName === 'area' || tagName === 'iframe' || tagName === 'frame') {
+    return true;
+  }
+
+  if (attribs.href || attribs['data-href'] || attribs['data-url']) return true;
+  return Boolean(attribs.onclick && /(?:location(?:\.href)?\s*=|window\.open)/i.test(attribs.onclick));
+}
+
 // 웹 구조(DOM) 분석 기반 게시판 목록 페이지 판정 (반복 행/카드 + 쿼리/경로 페이징 네비게이션)
 function isBoardListPage(dom, resolvedUrl) {
   if (!dom || !dom.children || !resolvedUrl) return false;
@@ -479,6 +679,67 @@ function isBoardListPage(dom, resolvedUrl) {
     }
 
     return (numberPageLinkCount >= 2 || (numberPageLinkCount >= 1 && hasPagingParam));
+  } catch (e) {
+    return false;
+  }
+}
+
+// 게시판 목록 안에서 새 게시물을 만드는 실제 조작 요소가 노출됐는지 판정
+function hasBoardAuthoringControl(dom) {
+  if (!dom || !dom.children) return false;
+
+  try {
+    const controls = domutils.findAll(el => {
+      if (!el || el.type !== 'tag') return false;
+      const tagName = String(el.name || '').toLowerCase();
+      const attrs = el.attribs || {};
+      const role = String(attrs.role || '').toLowerCase();
+      const inputType = String(attrs.type || '').toLowerCase();
+      return tagName === 'a' || tagName === 'button' || role === 'button' ||
+        (tagName === 'input' && ['button', 'submit', 'image'].includes(inputType));
+    }, dom.children);
+
+    for (const control of controls) {
+      const attrs = control.attribs || {};
+      if ('disabled' in attrs || String(attrs['aria-disabled'] || '').toLowerCase() === 'true') continue;
+
+      const label = [
+        domutils.getText(control),
+        attrs.value,
+        attrs.title,
+        attrs['aria-label']
+      ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+      const action = [
+        attrs.href,
+        attrs['data-href'],
+        attrs['data-url'],
+        attrs.formaction,
+        attrs.onclick,
+        attrs.name,
+        attrs.id,
+        attrs.class
+      ].filter(Boolean).join(' ');
+      const combined = `${label} ${action}`;
+
+      const isUnrelatedAction = /(?:회원\s*가입|로그인|검색|댓글|답글|수정|삭제|취소|목록|signup|sign\s*up|login|search|comment|reply|edit|delete|cancel)/i.test(combined);
+      if (isUnrelatedAction) continue;
+
+      const hasAuthoringLabel = /(?:^(?:등록|작성|쓰기)$|글\s*쓰기|글\s*작성|게시(?:물|글)\s*(?:작성|등록)|새\s*글|write\s*(?:post|article)?|new\s*(?:post|article)|create\s*(?:post|article)|compose)/i.test(label);
+      const hasAuthoringAction = /(?:[?&](?:mode|mod|act|action|cmd|proc)=(?:write|create|insert|add|register)\b|\/(?:write|create|compose|new)(?:[/?#.]|$)|(?:fn|go|open)?(?:write|create|compose)(?:form|view)?\s*\()/i.test(action);
+
+      if (hasAuthoringLabel || hasAuthoringAction) return true;
+    }
+  } catch (e) {}
+
+  return false;
+}
+
+function isExposedIndexBoard(spec, exposedUrls, origin) {
+  if (!spec || !exposedUrls) return false;
+  try {
+    const boardUrl = new URL(spec.sampleUrl || spec.baseKey, origin).toString();
+    const boardKey = getBoardIdentityKey(boardUrl);
+    return Array.from(exposedUrls).some(exposedUrl => getBoardIdentityKey(exposedUrl) === boardKey);
   } catch (e) {
     return false;
   }
@@ -1267,6 +1528,7 @@ function extractEvidenceSnippet(fullText, targetWord, maxLen = 140) {
 class DetectEngine {
   constructor() {
     this.currentSessionId = null;
+    this.workflowPromise = null;
     this.cleanroomPatternCache = null;
     this.cleanroomPatternLoadPromise = null;
     this.session = {
@@ -1290,6 +1552,12 @@ class DetectEngine {
       adaptivePageLimit: 0,
       schedulerCursor: 0,
       visitedUrls: new Set(),
+      excludedUrlKeys: new Set(),
+      exposedIndexUrls: new Set(),
+      nonstandardPortFindingUrls: new Set(),
+      reflectionProbeSignatures: new Set(),
+      reflectionCheckedBoardKeys: new Set(),
+      siteSearchProbeDone: false,
       contentQueue: [],  // 일반 콘텐츠/메뉴/카테고리 대기열
       articleQueue: [],  // 게시물 본문 상세 뷰 대기열
       reserveBoardPageQueue: [],
@@ -1306,6 +1574,134 @@ class DetectEngine {
       findings: [],
       timerId: null
     };
+  }
+
+  async probeReflectedSearch(spec, pollutedPattern, allowRenderedFallback = false) {
+    if (!spec || !pollutedPattern) return null;
+    const nonce = crypto.randomBytes(6).toString('hex');
+    const payload = `TARAE_${nonce}_${pollutedPattern}_${nonce}`;
+    const probeUrl = buildReflectionProbeUrl(spec, payload);
+    let inspection = null;
+    let status = 0;
+
+    try {
+      await sleep(this.session.speedDelayMs);
+      const response = await fetch(probeUrl, {
+        headers: {
+          ...getRandomHumanHeaders(this.session.entryUrl),
+          'Cache-Control': 'no-store',
+          Pragma: 'no-cache'
+        },
+        signal: AbortSignal.timeout(10000)
+      });
+      status = response.status;
+      if (isSameDomain(response.url || probeUrl, this.session.entryUrl)) {
+        const contentType = response.headers.get('content-type') || '';
+        // 서버 오류 화면은 콘텐츠 분석과 브라우저 정밀 검사의 대상에서 제외
+        if (response.status < 500 && contentType.includes('text/html')) {
+          const buffer = Buffer.from(await response.arrayBuffer());
+          const html = decodeHtmlBuffer(buffer, contentType);
+          inspection = inspectReflectedProbeHtml(html, payload, response.headers, response.url || probeUrl);
+        }
+      }
+    } catch (e) {
+      console.warn('[DetectEngine] 반사형 검색 검사 요청 오류:', e.message);
+    }
+
+    if ((!inspection || !inspection.reflected) && allowRenderedFallback &&
+        Date.now() + 12000 < this.session.scanDeadlineAtMs) {
+      try {
+        const rendered = await browserInspector.inspectPageDetails(probeUrl, 10000, {
+          waitForDynamicNetwork: true,
+          collectDynamicPagination: false
+        });
+        if (rendered && rendered.html) {
+          const renderedInspection = inspectReflectedProbeHtml(rendered.html, payload, null, probeUrl);
+          if (renderedInspection.reflected) {
+            if (inspection && inspection.indexLimited) {
+              renderedInspection.indexLimited = true;
+              renderedInspection.limitReason = inspection.limitReason;
+            }
+            inspection = renderedInspection;
+          }
+        }
+      } catch (e) {
+        console.warn('[DetectEngine] 반사형 검색 동적 화면 검사 오류:', e.message);
+      }
+    }
+
+    if (!inspection || !inspection.reflected || status < 200 || status >= 300) return null;
+    const evidence = extractEvidenceSnippet(inspection.visibleText, payload, 220);
+    return {
+      probeUrl,
+      payload,
+      status,
+      evidence,
+      indexLimited: inspection.indexLimited,
+      limitReason: inspection.limitReason
+    };
+  }
+
+  async inspectReflectedSearchForms(dom, currentUrl, currentItem, isCurrentBoardList, isCurrentArticle, pollutedPatterns, allowRenderedFallback) {
+    const forms = extractGetSearchForms(dom, currentUrl);
+    if (forms.length === 0) return [];
+
+    let scopeKey = null;
+    if (isCurrentBoardList) {
+      const pagingInfo = parsePagingInfoFromHref(currentUrl, '');
+      const pageNum = Number(currentItem.pageNum || (pagingInfo && pagingInfo.pageNum) || 1);
+      if (pageNum > 1) return [];
+      scopeKey = currentItem.boardKey || getBoardIdentityKey(currentUrl);
+      if (this.session.reflectionCheckedBoardKeys.has(scopeKey)) return [];
+      this.session.reflectionCheckedBoardKeys.add(scopeKey);
+    } else {
+      if (isCurrentArticle || this.session.siteSearchProbeDone) return [];
+      scopeKey = 'site-search';
+      this.session.siteSearchProbeDone = true;
+    }
+
+    const untested = forms.filter(spec => !this.session.reflectionProbeSignatures.has(spec.signature));
+    if (untested.length === 0) return [];
+
+    let selected = untested[0];
+    if (isCurrentBoardList && untested.length > 1) {
+      const current = new URL(currentUrl);
+      selected = [...untested].sort((left, right) => {
+        const score = spec => {
+          const action = new URL(spec.actionUrl);
+          let value = action.pathname === current.pathname ? 4 : 0;
+          for (const [key, fixedValue] of spec.fixedParams || []) {
+            if (current.searchParams.has(key) && current.searchParams.get(key) === fixedValue) value += 3;
+          }
+          return value;
+        };
+        return score(right) - score(left);
+      })[0];
+    }
+
+    this.session.reflectionProbeSignatures.add(selected.signature);
+    const pollutedPattern = selectReflectionProbePattern(pollutedPatterns);
+    if (!pollutedPattern || Date.now() + 12000 >= this.session.scanDeadlineAtMs) return [];
+
+    this.session.currentStep = `반사형 검색 오염 검사 중: ${isCurrentBoardList ? '게시판 검색' : '대표 검색'}`;
+    const result = await this.probeReflectedSearch(selected, pollutedPattern, allowRenderedFallback);
+    if (!result) return [];
+
+    const limitText = result.indexLimited
+      ? `색인 제한 신호 확인: ${result.limitReason}`
+      : '색인 제한 신호 없음';
+    const reason = `반사형 검색 입력값 노출 확인 (${limitText})`;
+    return [{
+      url: result.probeUrl,
+      is_violation: true,
+      location: `${isCurrentBoardList ? '게시판' : '사이트'} GET 검색 결과`,
+      evidence_text: result.evidence,
+      technique: 'REFLECTED_SEARCH',
+      reason,
+      matched_keyword: pollutedPattern,
+      extra_finding: reason,
+      scope_key: scopeKey
+    }];
   }
 
   // [1단계: 사전 탐색 및 계획 수립] 메인 화면 및 전체 메뉴(GNB/LNB/푸터) 고속 스캔을 통해
@@ -1370,6 +1766,9 @@ class DetectEngine {
       const siteTitle = this.extractSiteTitle(rootDom, currentTargetUrl);
       this.session.masterTitle = siteTitle;
       this.session.effectiveRootUrl = currentTargetUrl;
+      if (this.session.excludedUrlKeys) {
+        this.session.excludedUrlKeys.delete(normalizeUrl(currentTargetUrl));
+      }
 
       // 시작 URL과 실제 도착한 메인 URL이 다른 경우(포워딩된 경우) contentQueue에 포워딩 대상도 추가
       if (currentTargetUrl !== entryUrl) {
@@ -1392,6 +1791,7 @@ class DetectEngine {
       if (frames.length > 0) {
         console.log(`[DetectEngine] 메인 페이지에서 프레임 ${frames.length}개 발견, 프레임 내부 메뉴 조사...`);
         for (const fr of frames) {
+          if (this.hasVisitedOrExcludedUrl(fr.url)) continue;
           try {
             const frResp = await fetch(fr.url, {
               headers: {
@@ -1432,7 +1832,7 @@ class DetectEngine {
           let raw = a.attribs.href || a.attribs['data-href'];
           if (!raw) continue;
           const resolved = this.resolveUrl(origin, currentTargetUrl, raw);
-          if (resolved && isSameDomain(resolved, entryUrl) && resolved !== currentTargetUrl && !isNonContentLink(resolved, a)) {
+          if (resolved && isSameDomain(resolved, entryUrl) && resolved !== currentTargetUrl && !this.hasVisitedOrExcludedUrl(resolved) && !isNonContentLink(resolved, a)) {
             if (!splashCandidateUrls.includes(resolved)) {
               splashCandidateUrls.push(resolved);
             }
@@ -1551,7 +1951,7 @@ class DetectEngine {
           break;
         }
       }
-      if (htmlSitemapUrl) {
+      if (htmlSitemapUrl && !this.hasVisitedOrExcludedUrl(htmlSitemapUrl)) {
         try {
           console.log('[DetectEngine] HTML 사이트맵 감지 -> 전수 메뉴 일괄 수확:', htmlSitemapUrl);
           const smResp = await fetch(htmlSitemapUrl, {
@@ -1585,7 +1985,7 @@ class DetectEngine {
           let dorkUrls;
           if (this.session.knownSearchCompleted) {
             dorkUrls = new Map(this.session.knownSearchUrls.map(url => [url, {
-              linkText: '[DuckDuckGo] 브라우저 검색 색인 URL',
+              linkText: '[노출된 색인] 검색엔진 색인 URL',
               isDorkTarget: true,
               riskScore: 90
             }]));
@@ -1600,6 +2000,7 @@ class DetectEngine {
               candidateUrls.set(dUrl, dMeta);
             }
             dorkEpicenterUrls.add(dUrl);
+            this.session.exposedIndexUrls.add(normalizeUrl(dUrl));
           }
         } catch (dorkErr) {
           console.warn('[DetectEngine] DuckDuckGo 색인 수집 오류:', dorkErr.message);
@@ -1673,6 +2074,7 @@ class DetectEngine {
       // candidateUrls를 정규화된 맵으로 교체
       candidateUrls.clear();
       for (const [nUrl, nMeta] of normalizedUrls.entries()) {
+        if (this.hasVisitedOrExcludedUrl(nUrl)) continue;
         candidateUrls.set(nUrl, nMeta);
       }
       console.log(`[DetectEngine] 지능형 URL 수집 완료: ${beforeCount}개 -> 정규화 후 ${candidateUrls.size}개 (CMS: ${this.session.detectedCms || '미탐지'})`);
@@ -1794,7 +2196,12 @@ class DetectEngine {
             if (!isArticleDetailPageUrl(item.url) && isBoardListPage(subDom, item.url)) {
               const spec = extractBoardSpec(subDom, item.url);
               if (spec && !this.session.discoveredBoards.has(spec.baseKey)) {
-                this.session.discoveredBoards.set(spec.baseKey, { ...spec, title: item.text || spec.baseKey, sampleUrl: item.url });
+                this.session.discoveredBoards.set(spec.baseKey, {
+                  ...spec,
+                  title: item.text || spec.baseKey,
+                  sampleUrl: item.url,
+                  hasAuthoringControl: hasBoardAuthoringControl(subDom)
+                });
                 console.log(`[DetectEngine] 신규 게시판 식별 성공: ${spec.baseKey} (전체 ${spec.totalPage}페이지)`);
               }
               confirmedBoardCandidateUrls.add(normalizeUrl(item.url));
@@ -1817,7 +2224,7 @@ class DetectEngine {
       // 0. 노출된 색인(DuckDuckGo 색인) URL 최우선 배치 (Index 0부터 크롤링 시작)
       for (const dUrl of dorkEpicenterUrls) {
         const dorkKey = normalizeUrl(dUrl);
-        if (!existingQueueUrls.has(dorkKey)) {
+        if (!existingQueueUrls.has(dorkKey) && !this.hasVisitedOrExcludedUrl(dorkKey)) {
           existingQueueUrls.add(dorkKey);
           try {
             const duObj = new URL(dUrl);
@@ -1885,27 +2292,15 @@ class DetectEngine {
 
         for (const [baseKey, spec] of this.session.discoveredBoards.entries()) {
           const boardTotal = Math.max(1, spec.totalPage || 1);
-          let ratio = boardTotal / Math.max(1, sumTotalPages);
+          const ratio = boardTotal / Math.max(1, sumTotalPages);
 
-          // 노출된 색인 URL과 동일 경로를 공유하는 게시판인지 동적 판정 (하드코딩 없음)
-          const isDorkBoard = Array.from(dorkEpicenterUrls).some(dUrl => {
-            try {
-              const du = new URL(dUrl);
-              const bu = new URL(spec.sampleUrl || spec.baseKey, origin);
-              return du.pathname === bu.pathname;
-            } catch (e) { return false; }
-          });
-
-          if (isDorkBoard) {
-            ratio = Math.min(1.0, ratio * 2.5); // 노출된 색인 게시판 예산 2.5배 가중치 부스트
-            console.log(`[DetectEngine] 노출된 색인 게시판 동적 가중치 부스트 적용: ${baseKey}`);
-          }
-
-          // 단일 게시판 최대 독점 방지 (노출된 색인 게시판은 최대 60%까지 상향 허용)
-          const maxBoardQuota = isDorkBoard
-            ? Math.max(20, Math.floor(boardBuffer * 0.60))
-            : Math.max(10, Math.floor(boardBuffer * 0.30));
-          const allocatedBudget = Math.min(maxBoardQuota, Math.max(5, Math.floor(boardBuffer * ratio)));
+          const isDorkBoard = isExposedIndexBoard(spec, dorkEpicenterUrls, origin);
+          const hasAuthoring = Boolean(spec.hasAuthoringControl);
+          const priorityWeight = getBoardPriorityWeight(isDorkBoard, hasAuthoring);
+          const baseAllocatedBudget = Math.max(5, Math.floor(boardBuffer * ratio));
+          const weightedBudget = applyBoardPriorityWeight(baseAllocatedBudget, priorityWeight);
+          const maxBoardQuota = Math.max(10, Math.floor(boardBuffer * Math.min(1, 0.30 * priorityWeight)));
+          const allocatedBudget = Math.min(maxBoardQuota, weightedBudget);
           const samplingPlan = planBoardSampling(boardTotal, allocatedBudget);
           const postsPerList = samplingPlan.postsPerList;
           const stratifiedPages = generateStratifiedPages(spec, samplingPlan.listPageCount);
@@ -1917,7 +2312,7 @@ class DetectEngine {
           totalBoardStratifiedPages += stratifiedPages.length;
           totalBoardPlannedVisits += samplingPlan.plannedVisits;
 
-          console.log(` -> [게시판 계획] ${baseKey}: 총 ${boardTotal}p, 배분 ${allocatedBudget}건, 목록 ${stratifiedPages.length}p, 목록당 게시물 최대 ${postsPerList}건`);
+          console.log(` -> [게시판 계획] ${baseKey}: 총 ${boardTotal}p, 기본 ${baseAllocatedBudget}건, 가중치 ${priorityWeight}, 배분 ${allocatedBudget}건, 목록 ${stratifiedPages.length}p, 목록당 게시물 최대 ${postsPerList}건`);
           logWrite(config.paths.logsDir, {
             event: 'board_page_sample',
             boardKey: baseKey,
@@ -1979,7 +2374,9 @@ class DetectEngine {
               boardKey: baseKey,
               pageNum: sp.pageNum,
               samplePostsLimit: postsPerList,
-              isDorkEpicenter: isDorkBoard
+              isDorkEpicenter: isDorkBoard,
+              hasAuthoringControl: hasAuthoring,
+              boardPriorityWeight: priorityWeight
             };
             plannedBoardItems.push(queueItem);
             boardSampleLimitByUrl.set(normalizeUrl(sp.url), postsPerList);
@@ -2099,6 +2496,7 @@ class DetectEngine {
       observedPageMs: this.session.observedPageMs || 0,
       adaptivePageLimit: this.session.adaptivePageLimit || this.session.estimatedTotalPages || 0,
       totalVisited: visited,
+      excludedHistoryUrlCount: this.session.excludedUrlKeys ? this.session.excludedUrlKeys.size : 0,
       articleBufferCap: this.session.articleBufferCap || 1800,
       contentQueueCount: this.session.contentQueue ? this.session.contentQueue.length : 0,
       articleQueueCount: this.session.articleQueue ? this.session.articleQueue.length : 0,
@@ -2118,6 +2516,18 @@ class DetectEngine {
       tempPollutedKeywords: (this.session && this.session.tempPollutedKeywords) || [],
       tempAllowedKeywords: (this.session && this.session.tempAllowedKeywords) || []
     };
+  }
+
+  hasVisitedOrExcludedUrl(url) {
+    try {
+      const key = normalizeUrl(String(url || ''));
+      return Boolean(
+        (this.session.visitedUrls && this.session.visitedUrls.has(key)) ||
+        (this.session.excludedUrlKeys && this.session.excludedUrlKeys.has(key))
+      );
+    } catch (e) {
+      return false;
+    }
   }
 
   async pause() {
@@ -2167,11 +2577,19 @@ class DetectEngine {
       throw new Error('올바른 웹사이트 URL을 입력해 주세요.');
     }
 
-    if (this.session && (this.session.status === 'RUNNING' || this.session.status === 'PLANNING')) {
-      console.log('[DetectEngine] 이전 점검 진행 중 감지 -> 이전 세션 즉시 안전 중단 및 새 세션 전환');
+    if (this.workflowPromise) {
+      console.log('[DetectEngine] 이전 점검 작업 종료 대기 후 새 세션 시작');
       this.session.status = 'STOPPED';
       if (this.session.timerId) clearInterval(this.session.timerId);
-      await sleep(150);
+      const previousWorkflow = this.workflowPromise;
+      try {
+        await previousWorkflow;
+      } catch (e) {
+        console.warn('[DetectEngine] 이전 점검 작업 종료 중 오류:', e.message);
+      }
+      if (this.workflowPromise === previousWorkflow) {
+        this.workflowPromise = null;
+      }
     }
 
     const sessionId = `sess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -2198,6 +2616,17 @@ class DetectEngine {
     const contentQuota = Math.max(20, Math.floor(estimatedTotalPages * 0.25));
     const articleQuota = Math.max(20, estimatedTotalPages - contentQuota);
 
+    const entryUrlKey = normalizeUrl(trimmedUrl);
+    const excludedUrlKeys = new Set();
+    for (const candidate of Array.isArray(options.excludedHistoryUrls) ? options.excludedHistoryUrls : []) {
+      try {
+        const resolved = resolveCrawlUrl(String(candidate), trimmedUrl);
+        if (!isSameDomain(resolved, trimmedUrl)) continue;
+        const key = normalizeUrl(resolved);
+        if (key && key !== entryUrlKey) excludedUrlKeys.add(key);
+      } catch (e) {}
+    }
+
     const knownSearchUrls = [];
     const knownSearchKeys = new Set();
     for (const candidate of Array.isArray(options.knownSearchUrls) ? options.knownSearchUrls : []) {
@@ -2205,7 +2634,7 @@ class DetectEngine {
         const resolved = resolveCrawlUrl(String(candidate), trimmedUrl);
         if (!isSameDomain(resolved, trimmedUrl)) continue;
         const key = normalizeUrl(resolved);
-        if (knownSearchKeys.has(key)) continue;
+        if (knownSearchKeys.has(key) || excludedUrlKeys.has(key)) continue;
         knownSearchKeys.add(key);
         knownSearchUrls.push(resolved);
       } catch (e) {}
@@ -2244,6 +2673,13 @@ class DetectEngine {
       adaptivePageLimit: estimatedTotalPages,
       schedulerCursor: 0,
       visitedUrls: new Set(),
+      excludedUrlKeys,
+      exposedIndexUrls: new Set(),
+      nonstandardPortFindingUrls: new Set(),
+      reflectionProbeSignatures: new Set(),
+      reflectionCheckedBoardKeys: new Set(),
+      siteSearchProbeDone: false,
+      excludeHistoryMasterId: options.excludeHistoryMasterId || null,
       contentQueue: [],  // 일반 콘텐츠 대기열
       articleQueue: [],  // 게시물 본문 대기열
       reserveBoardPageQueue: [],  // 기본 탐색에서 선택하지 않은 게시판 쪽
@@ -2280,11 +2716,17 @@ class DetectEngine {
     }, 1000);
 
     // 백그라운드 크롤링 및 탐지 비동기 구동 (고유 sessionId 전달)
-    this.runInspectionWorkflow(sessionId).catch(err => {
+    const workflowPromise = this.runInspectionWorkflow(sessionId);
+    this.workflowPromise = workflowPromise;
+    workflowPromise.catch(err => {
       if (this.currentSessionId === sessionId) {
         console.error('[DetectEngine Workflow Error]', err);
         this.session.status = 'STOPPED';
         this.session.currentStep = '점검 중단: ' + err.message;
+      }
+    }).finally(() => {
+      if (this.workflowPromise === workflowPromise) {
+        this.workflowPromise = null;
       }
     });
 
@@ -2310,7 +2752,7 @@ class DetectEngine {
     await this.scoutAndPlanSite(entryUrl, origin);
 
     // 탐지 계획 수립 도중 중단 요청이 있었으면 즉시 종료
-    if (this.session.status === 'STOPPED') {
+    if (this.currentSessionId !== sessionId || this.session.sessionId !== sessionId || this.session.status === 'STOPPED') {
       return;
     }
 
@@ -2438,7 +2880,7 @@ class DetectEngine {
       }
 
       // 이미 방문한 URL 스킵
-      if (this.session.visitedUrls.has(currentVisitKey)) {
+      if (this.hasVisitedOrExcludedUrl(currentVisitKey)) {
         continue;
       }
       this.session.visitedUrls.add(currentVisitKey);
@@ -2465,6 +2907,25 @@ class DetectEngine {
       const cleanroom = await this.loadCleanroomPatterns();
       const { pollutedPatterns, suspectPatterns, exceptionPatterns, memoMap, requiredTermsMap } = cleanroom;
 
+      const currentUrlKey = normalizeUrl(currentUrl);
+      const nonstandardPort = getNonstandardPort(currentUrl);
+      if (nonstandardPort && this.session.exposedIndexUrls.has(currentUrlKey) &&
+          !this.session.nonstandardPortFindingUrls.has(currentUrlKey)) {
+        this.session.nonstandardPortFindingUrls.add(currentUrlKey);
+        const reason = `노출된 색인에서 비표준 포트 ${nonstandardPort} 사용 URL 발견`;
+        pageFindings.push({
+          id: `f_${String(this.session.findings.length + pageFindings.length + 1).padStart(3, '0')}`,
+          url: currentUrl,
+          is_violation: true,
+          location: '노출된 색인 URL',
+          evidence_text: currentUrl,
+          technique: 'NONSTANDARD_PORT',
+          reason,
+          matched_keyword: nonstandardPort,
+          extra_finding: reason
+        });
+      }
+
       try {
         // 지연 시간 적용 (WAF 차단 및 먹통 방지)
         await sleep(this.session.speedDelayMs);
@@ -2478,39 +2939,12 @@ class DetectEngine {
         httpStatus = response.status;
         const contentType = response.headers.get('content-type') || '';
 
-        if (contentType.includes('text/html')) {
-          // 바이너리 버퍼로 수신하여 EUC-KR / CP949 / UTF-8 인코딩 자동 판별 디코딩
+        // 서버 오류 화면은 콘텐츠 분석과 브라우저 정밀 검사의 대상에서 제외
+        if (response.status < 500 && contentType.includes('text/html')) {
+          // 바이너리 버퍼로 수신하여 문자 인코딩 자동 판별
           const arrayBuffer = await response.arrayBuffer();
           const buffer = Buffer.from(arrayBuffer);
-
-          let encoding = 'utf-8';
-          // 1. HTTP Content-Type 헤더의 charset 검사
-          const charsetMatch = contentType.match(/charset=([a-zA-Z0-9_-]+)/i);
-          if (charsetMatch && charsetMatch[1]) {
-            encoding = charsetMatch[1].toLowerCase();
-          } else {
-            // 2. HTML 메타 태그의 charset 검사 (앞부분 2048바이트에서 검색)
-            const snippet = buffer.subarray(0, 2048).toString('ascii');
-            const metaCharsetMatch = snippet.match(/<meta[^>]*charset=["']?([a-zA-Z0-9_-]+)/i) ||
-                                     snippet.match(/<meta[^>]*http-equiv=["']?Content-Type["']?[^>]*content=["'][^"']*charset=([a-zA-Z0-9_-]+)/i);
-            if (metaCharsetMatch && metaCharsetMatch[1]) {
-              encoding = metaCharsetMatch[1].toLowerCase();
-            }
-          }
-
-          if (encoding.includes('euc-kr') || encoding.includes('cp949') || encoding.includes('korean') || encoding.includes('ks_c_5601')) {
-            try {
-              if (iconv) {
-                pageHtml = iconv.decode(buffer, 'cp949');
-              } else {
-                pageHtml = new TextDecoder('euc-kr').decode(buffer);
-              }
-            } catch (decErr) {
-              pageHtml = buffer.toString('utf-8');
-            }
-          } else {
-            pageHtml = buffer.toString('utf-8');
-          }
+          pageHtml = decodeHtmlBuffer(buffer, contentType);
         }
       } catch (reqErr) {
         httpStatus = 500;
@@ -2541,7 +2975,7 @@ class DetectEngine {
 
         // [클라이언트 사이드 포워딩 추적] JS location 이동 또는 meta refresh 발견 시 대기열 최우선 삽입하여 즉시 쫓아감
         const clientRedirectTarget = extractClientRedirectUrl(pageHtml, currentUrl);
-        if (clientRedirectTarget && isSameDomain(clientRedirectTarget, entryUrl) && !this.session.visitedUrls.has(normalizeUrl(clientRedirectTarget))) {
+        if (clientRedirectTarget && isSameDomain(clientRedirectTarget, entryUrl) && !this.hasVisitedOrExcludedUrl(clientRedirectTarget)) {
           const isQueued = this.session.contentQueue.some(q => q.url === clientRedirectTarget) ||
                            this.session.articleQueue.some(q => q.url === clientRedirectTarget) ||
                            this.session.boardPageQueue.some(q => q.url === clientRedirectTarget) ||
@@ -2563,7 +2997,7 @@ class DetectEngine {
         // [frame / iframe 내부 침투] 프레임셋 또는 아이프레임 내부 URL을 대기열 앞단에 등록하여 연계 검출
         const pageFrames = extractFrameUrls(dom, currentUrl);
         for (const fr of pageFrames) {
-          if (isSameDomain(fr.url, entryUrl) && !this.session.visitedUrls.has(normalizeUrl(fr.url))) {
+          if (isSameDomain(fr.url, entryUrl) && !this.hasVisitedOrExcludedUrl(fr.url)) {
             const isQueued = this.session.contentQueue.some(q => q.url === fr.url) ||
                              this.session.articleQueue.some(q => q.url === fr.url) ||
                              this.session.boardPageQueue.some(q => q.url === fr.url) ||
@@ -2585,6 +3019,7 @@ class DetectEngine {
 
         // 브라우저 실행 후 생성되는 동적 HTML도 같은 규칙으로 분석
         let browserInspection = { findings: [], links: [], html: '' };
+        let pageUsesRenderedDom = false;
         try {
           const useDynamicDiscovery = needsDynamicLinkDiscovery(dom, currentUrl);
           browserInspection = await browserInspector.inspectPageDetails(currentUrl, 15000, {
@@ -2597,6 +3032,7 @@ class DetectEngine {
             const sourceText = (domutils.getText(dom.children) || '').replace(/\s+/g, ' ').trim();
             if (renderedText.length > sourceText.length) {
               dom = renderedDom;
+              pageUsesRenderedDom = true;
             }
           }
         } catch (browserErr) {
@@ -2612,6 +3048,8 @@ class DetectEngine {
         if (isCurrentBoardList) {
           const spec = extractBoardSpec(dom, currentUrl);
           if (spec && !this.session.discoveredBoards.has(spec.baseKey)) {
+            spec.sampleUrl = currentUrl;
+            spec.hasAuthoringControl = hasBoardAuthoringControl(dom);
             this.session.discoveredBoards.set(spec.baseKey, spec);
             const totalBuffer = this.session.adaptivePageLimit || this.session.articleBufferCap;
             const staticBuffer = Math.max(200, Math.floor(totalBuffer * 0.20));
@@ -2622,7 +3060,10 @@ class DetectEngine {
 
             const boardTotal = Math.max(1, spec.totalPage || 1);
             const ratio = boardTotal / Math.max(1, sumTotalPages);
-            const allocatedBudget = Math.max(5, Math.floor(boardBuffer * ratio));
+            const isDorkBoard = isExposedIndexBoard(spec, this.session.exposedIndexUrls || [], origin);
+            const priorityWeight = getBoardPriorityWeight(isDorkBoard, spec.hasAuthoringControl);
+            const baseAllocatedBudget = Math.max(5, Math.floor(boardBuffer * ratio));
+            const allocatedBudget = applyBoardPriorityWeight(baseAllocatedBudget, priorityWeight);
             const samplingPlan = planBoardSampling(boardTotal, allocatedBudget);
             const stratifiedPages = generateStratifiedPages(spec, samplingPlan.listPageCount);
             const remainingPages = generateRemainingBoardPages(
@@ -2634,7 +3075,7 @@ class DetectEngine {
               currentItem.samplePostsLimit || 0,
               samplingPlan.postsPerList
             );
-            console.log(`[DetectEngine] 탐색 중 신규 게시판 발견: ${spec.baseKey} (총 ${boardTotal}p) -> 목록 ${samplingPlan.listPageCount}p, 목록당 게시물 최대 ${samplingPlan.postsPerList}건`);
+            console.log(`[DetectEngine] 탐색 중 신규 게시판 발견: ${spec.baseKey} (총 ${boardTotal}p, 가중치 ${priorityWeight}) -> 목록 ${samplingPlan.listPageCount}p, 목록당 게시물 최대 ${samplingPlan.postsPerList}건`);
             logWrite(config.paths.logsDir, {
               event: 'board_page_sample',
               boardKey: spec.baseKey,
@@ -2644,7 +3085,7 @@ class DetectEngine {
             const newBoardItems = [];
             for (const sp of stratifiedPages) {
               const sampleKey = normalizeUrl(sp.url);
-              if (!this.session.visitedUrls.has(sampleKey) && !this.session.boardPageQueue.some(b => normalizeUrl(b.url) === sampleKey)) {
+              if (!this.hasVisitedOrExcludedUrl(sampleKey) && !this.session.boardPageQueue.some(b => normalizeUrl(b.url) === sampleKey)) {
                 newBoardItems.push({
                   url: sp.url,
                   depth: currentItem.depth + 1,
@@ -2653,7 +3094,10 @@ class DetectEngine {
                   isBoardList: true,
                   boardKey: spec.baseKey,
                   pageNum: sp.pageNum,
-                  samplePostsLimit: samplingPlan.postsPerList
+                  samplePostsLimit: samplingPlan.postsPerList,
+                  isDorkEpicenter: isDorkBoard,
+                  hasAuthoringControl: spec.hasAuthoringControl,
+                  boardPriorityWeight: priorityWeight
                 });
               }
             }
@@ -2667,7 +3111,7 @@ class DetectEngine {
               const reserveKey = normalizeUrl(rp.url);
               const isQueued = this.session.boardPageQueue.some(item => normalizeUrl(item.url) === reserveKey) ||
                 this.session.reserveBoardPageQueue.some(item => normalizeUrl(item.url) === reserveKey);
-              if (!this.session.visitedUrls.has(reserveKey) && !isQueued) {
+              if (!this.hasVisitedOrExcludedUrl(reserveKey) && !isQueued) {
                 newReserveBoardItems.push({
                   url: rp.url,
                   depth: currentItem.depth + 1,
@@ -2703,10 +3147,9 @@ class DetectEngine {
         } else {
           // [1차] htmlparser2 기반 JAMO/HOMOGLYPH 텍스트 패턴 분석
           try {
-            pageFindings = await this.analyzePageForViolations(dom, currentUrl);
+            pageFindings.push(...await this.analyzePageForViolations(dom, currentUrl));
           } catch (pageErr) {
             console.warn('[DetectEngine] analyzePageForViolations Error:', pageErr.message);
-            pageFindings = [];
           }
 
           // [2차] Puppeteer 브라우저 기반 TRANSPARENT/OFFSCREEN 정밀 검사
@@ -2798,6 +3241,24 @@ class DetectEngine {
             logWrite(config.paths.logsDir, { event: 'spam_similarity_page', masterId: this.session.masterId, url: currentUrl, status: 'visible_text_error', error: visErr.message });
           }
         }
+
+        try {
+          const reflectedFindings = await this.inspectReflectedSearchForms(
+            dom,
+            currentUrl,
+            currentItem,
+            isCurrentBoardList,
+            isCurrentArticle,
+            pollutedPatterns,
+            pageUsesRenderedDom
+          );
+          for (const finding of reflectedFindings) {
+            finding.id = `f_${String(this.session.findings.length + pageFindings.length + 1).padStart(3, '0')}`;
+            pageFindings.push(finding);
+          }
+        } catch (reflectionErr) {
+          console.warn('[DetectEngine] 반사형 검색 오염 검사 오류:', reflectionErr.message);
+        }
       // 하위 링크 추출 및 외부 사행성 스팸 링크 정밀 검사
         // 하위 링크 추출 및 이중 대기열(일반 콘텐츠 vs 게시물 버퍼) 적재
         const totalQueued = this.session.contentQueue.length + this.session.articleQueue.length;
@@ -2814,7 +3275,7 @@ class DetectEngine {
               continue;
             }
             const renderedKey = normalizeUrl(resolvedRenderedUrl);
-            const isAlreadyKnown = this.session.visitedUrls.has(renderedKey) ||
+            const isAlreadyKnown = this.hasVisitedOrExcludedUrl(renderedKey) ||
               this.session.articleQueue.some(item => normalizeUrl(item.url) === renderedKey) ||
               this.session.reserveArticleQueue.some(item => normalizeUrl(item.url) === renderedKey);
             if (!isAlreadyKnown && !pageArticleCandidateKeys.has(renderedKey)) {
@@ -2832,21 +3293,13 @@ class DetectEngine {
 
           // a, iframe, frame뿐만 아니라 tr[href], div[href], tr[onclick], div[data-href] 등 모든 클릭 가능 행/요소 추출
           const links = domutils.findAll(el => {
-            if (el.type !== 'tag') return false;
+            if (!isNavigableLinkElement(el)) return false;
             // 구글 애드센스 등 공식 광고 컨테이너 및 광고 iframe 수집 사전 차단
             if (el.attribs) {
               if (el.attribs.class && /adsbygoogle|kakao_ad|adfit/i.test(el.attribs.class)) return false;
               if (el.attribs.src && adPlatforms.isAdPlatform(el.attribs.src)) return false;
             }
-            if (el.name === 'a' || el.name === 'iframe' || el.name === 'frame') {
-              if (el.attribs && el.attribs.src && adPlatforms.isAdPlatform(el.attribs.src)) return false;
-              return true;
-            }
-            if (el.attribs) {
-              if (el.attribs.href || el.attribs['data-href'] || el.attribs['data-url']) return true;
-              if (el.attribs.onclick && /(?:location(?:\.href)?\s*=|window\.open)/i.test(el.attribs.onclick)) return true;
-            }
-            return false;
+            return !(el.attribs && el.attribs.src && adPlatforms.isAdPlatform(el.attribs.src));
           }, dom.children);
 
           for (const link of links) {
@@ -2900,7 +3353,7 @@ class DetectEngine {
                 continue;
               }
 
-              const isAlreadyVisited = this.session.visitedUrls.has(normalizeUrl(resolvedUrl));
+              const isAlreadyVisited = this.hasVisitedOrExcludedUrl(resolvedUrl);
               const isAlreadyQueued = this.session.contentQueue.some(q => q.url === resolvedUrl) ||
                                       this.session.articleQueue.some(q => q.url === resolvedUrl) ||
                                       this.session.boardPageQueue.some(q => q.url === resolvedUrl) ||
@@ -2965,7 +3418,7 @@ class DetectEngine {
           try {
             const pageJsRoutes = await harvestJavaScriptUrls(dom, currentUrl, origin, entryUrl);
             for (const [pju, pjm] of pageJsRoutes.entries()) {
-              if (!this.session.visitedUrls.has(normalizeUrl(pju)) &&
+              if (!this.hasVisitedOrExcludedUrl(pju) &&
                   !this.session.contentQueue.some(q => q.url === pju) &&
                   !this.session.articleQueue.some(q => q.url === pju) &&
                   !this.session.boardPageQueue.some(q => q.url === pju) &&
@@ -3011,7 +3464,7 @@ class DetectEngine {
               const reserveKey = normalizeUrl(art.url);
               const isQueued = this.session.reserveArticleQueue.some(item => normalizeUrl(item.url) === reserveKey) ||
                 this.session.articleQueue.some(item => normalizeUrl(item.url) === reserveKey);
-              if (!this.session.visitedUrls.has(reserveKey) && !isQueued &&
+              if (!this.hasVisitedOrExcludedUrl(reserveKey) && !isQueued &&
                   this.session.reserveArticleQueue.length < this.session.maxPages && currentItem.depth < 8) {
                 this.session.reserveArticleQueue.push({ ...art, isReserve: true });
               }
@@ -3060,6 +3513,17 @@ class DetectEngine {
       if (this.session && Array.isArray(this.session.tempAllowedKeywords) && this.session.tempAllowedKeywords.length > 0) {
         pageFindings = pageFindings.filter(f => !this.isFindingAllowed(f));
       }
+
+      // 오래 걸린 브라우저 검사나 AI 판정이 끝나는 사이 새 점검이 시작되었으면
+      // 이전 페이지 결과를 새 세션과 DB에 섞지 않고 즉시 폐기합니다.
+      if (this.currentSessionId !== sessionId || this.session.sessionId !== sessionId || this.session.status === 'STOPPED') {
+        console.log(`[DetectEngine] 만료된 세션의 페이지 결과 폐기: ${currentUrl}`);
+        return;
+      }
+
+      pageFindings.forEach((finding, index) => {
+        finding.id = `f_${String(this.session.findings.length + index + 1).padStart(3, '0')}`;
+      });
 
       // 트리 노드 구성
       const hasViolation = pageFindings.length > 0;
@@ -3888,6 +4352,8 @@ class DetectEngine {
         if (combinedText.length >= 6 && typeof llmPipelineService.getSpamVectorCount === 'function' && llmPipelineService.getSpamVectorCount() > 0) {
           similarityCheck.attempts++;
           try {
+            // 연속 추론 중에도 서버가 화면 갱신과 상태 요청을 처리할 수 있게 합니다.
+            await new Promise(resolve => setImmediate(resolve));
             const simRes = await llmPipelineService.calculateMaxSpamSimilarity(combinedText);
             similarityCheck.successes++;
             if (simRes) {
@@ -4096,8 +4562,10 @@ class DetectEngine {
         const matchInfo = suspectMatchInfo ||
                           findMatchedKeyword(combinedText, pollutedPatterns, memoMap) ||
                           findMatchedKeyword(text, pollutedPatterns, memoMap);
-        const matchedKw = matchInfo ? matchInfo.keyword : '의심 패턴';
-        const matchedMemo = matchInfo ? matchInfo.memo : (memoMap.get(matchedKw) || '의심 은어');
+        // 중위험 유사도만으로 들어온 문장에는 실제로 일치한 의심 단어가 없다.
+        // 가상의 단어와 뜻을 LLM에 넣으면 정상 문맥이 오염되므로 비워서 원문만 판정한다.
+        const matchedKw = matchInfo ? matchInfo.keyword : '';
+        const matchedMemo = matchInfo ? matchInfo.memo : '';
 
         try {
           const textForAi = combinedText || text;
@@ -4285,7 +4753,15 @@ detectEngine._testing = {
   needsDynamicLinkDiscovery,
   isArticleDetailPageUrl,
   parseRequiredTerms,
-  findMatchedSuspectKeyword
+  findMatchedSuspectKeyword,
+  getNonstandardPort,
+  extractGetSearchForms,
+  selectReflectionProbePattern,
+  buildReflectionProbeUrl,
+  inspectReflectedProbeHtml,
+  isNavigableLinkElement,
+  hasBoardAuthoringControl,
+  isExposedIndexBoard
 };
 
 module.exports = detectEngine;

@@ -19,14 +19,17 @@ function comparableUrl(value) {
   }
 }
 
-function standardTechnique(value) {
-  return ['JAMO', 'HOMOGLYPH', 'TRANSPARENT', 'OFFSCREEN'].includes(value) ? value : 'ETC';
+const STANDARD_TECHNIQUES = new Set(['JAMO', 'HOMOGLYPH', 'TRANSPARENT', 'OFFSCREEN']);
+const EXTRA_TECHNIQUES = new Set(['ETC', 'NONSTANDARD_PORT', 'REFLECTED_SEARCH']);
+
+function normalizedTechnique(value) {
+  return STANDARD_TECHNIQUES.has(value) || EXTRA_TECHNIQUES.has(value) ? value : 'ETC';
 }
 
 function uniqueFindingRows(rows) {
   const seen = new Set();
   return rows.filter(row => {
-    const key = [comparableUrl(row.url), row.location, standardTechnique(row.technique)].join('\u001f');
+    const key = [comparableUrl(row.url), row.location, normalizedTechnique(row.technique)].join('\u001f');
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -51,9 +54,9 @@ function buildResultReports(master, rows) {
   const extra = { meta, findings: [] };
   const uniqueRows = uniqueFindingRows(rows);
   for (const row of uniqueRows) {
-    const technique = standardTechnique(row.technique);
+    const technique = normalizedTechnique(row.technique);
 
-    const target = technique === 'ETC' ? extra : main;
+    const target = STANDARD_TECHNIQUES.has(technique) ? main : extra;
     const finding = {
       id: `f_${String(target.findings.length + 1).padStart(3, '0')}`,
       url: row.url,
