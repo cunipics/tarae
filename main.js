@@ -24,6 +24,8 @@ function startBackendServer() {
   const modelCacheDir = path.join(userDataDir, 'models');
   const databasePath = path.join(userDataDir, 'cms.db');
   const schemaStatePath = path.join(userDataDir, 'schema-version.json');
+  const logsDir = path.join(userDataDir, 'logs');
+  const outputDir = app.isPackaged ? path.dirname(process.execPath) : __dirname;
 
   fs.mkdirSync(userDataDir, { recursive: true });
   if (!fs.existsSync(databasePath)) {
@@ -41,6 +43,8 @@ function startBackendServer() {
       TARAE_MODEL_CACHE_DIR: modelCacheDir,
       TARAE_SCHEMA_STATE_FILE: schemaStatePath,
       TARAE_SCHEMA_VERSION: app.getVersion(),
+      TARAE_LOGS_DIR: logsDir,
+      TARAE_OUTPUT_DIR: outputDir,
       SQLITE_FILENAME: databasePath
     },
     stdio: 'pipe',
@@ -48,18 +52,29 @@ function startBackendServer() {
   });
 
   if (backendProcess.stdout) {
-    backendProcess.stdout.on('data', (data) => process.stdout.write(`[Backend] ${data}`));
+    backendProcess.stdout.on('data', (data) => {
+      process.stdout.write(`[Backend] ${data}`);
+      const message = String(data).trim();
+      if (message.includes('[AI Inference')) {
+        logWrite(logsDir, { event: 'backend_ai_trace', message });
+      }
+    });
   }
   if (backendProcess.stderr) {
-    backendProcess.stderr.on('data', (data) => process.stderr.write(`[Backend] ${data}`));
+    backendProcess.stderr.on('data', (data) => {
+      process.stderr.write(`[Backend] ${data}`);
+      logWrite(logsDir, { event: 'backend_stderr', message: String(data).trim() });
+    });
   }
 
   backendProcess.on('error', (type, location, report) => {
     console.error('[Backend] 서버 프로세스 오류:', type, location, report);
+    logWrite(logsDir, { event: 'backend_error', type, location, report });
   });
 
   backendProcess.on('exit', (code) => {
     backendProcess = null;
+    logWrite(logsDir, { event: 'backend_exit', code, appIsQuitting });
     if (!appIsQuitting) {
       console.error(`[Backend] 서버 프로세스 종료: code=${code}`);
     }
@@ -593,7 +608,8 @@ app.whenReady().then(function () {
       return { status: 'error', message: '관리자 화면에서만 저장할 수 있습니다.' };
     }
     logWrite(path.join(__dirname, 'logs'), { event: 'result_json_save', status: 'requested', bytes: Buffer.byteLength(String(payload && payload.content || ''), 'utf8') });
-    const result = await saveResultJson(payload, { app });
+    const outputDir = app.isPackaged ? path.dirname(process.execPath) : __dirname;
+    const result = await saveResultJson(payload, { app, outputDir });
     logWrite(path.join(__dirname, 'logs'), { event: 'result_json_save', status: result.status, path: result.path || null, error: result.message || null });
     console.log('[Result JSON Save]', result.status, result.path || result.message || '');
     return result;

@@ -51,6 +51,14 @@ const platforms = [
       'rubiconproject.com',
       'adroll.com'
     ]
+  },
+  {
+    name: '정상 공유 및 공공 뉴스 위젯',
+    domains: [
+      'facebook.com/sharer.php',
+      'twitter.com/intent/tweet',
+      'newsroom.korea.net/openapi/service/newsbox.do'
+    ]
   }
 ];
 

@@ -1,16 +1,15 @@
 /**
- * AI 불법광고 탐지 3단계 q8 모델 파이프라인 서비스
- * 1. 유사도: exp-models/dragonkue-KoEn-E5-Tiny-ONNX (q8)
- * 2. 번역: Xenova/opus-mt-ko-en (q8)
- * 3. 스팸/LLM: onnx-community/bert-tiny-finetuned-sms-spam-detection-ONNX 또는 Qwen2.5
+ * AI 불법광고 탐지 2단계 q8 모델 파이프라인 서비스
+ * 1. 유사도: AI_SIMILARITY_MODEL 환경 변수로 지정된 ONNX 모델
+ * 2. 스팸/LLM: AI_LLM_MODEL 환경 변수로 지정된 ONNX 판정 모델
  *
  * GPU 우선 가속 시도 및 미지원 시 CPU(WASM 멀티스레드) 자동 폴백
  */
 
 const aiConfig = require('../config/aiModel.config');
-const { splitTextForTranslation } = require('../utils/translationText');
 const fs = require('fs');
 const path = require('path');
+const { stripLeadingTitleMarkers } = require('../utils/inferenceText');
 
 let transformersModule = null;
 
@@ -23,7 +22,6 @@ const state = {
   gpuEnabled: false, // 디폴트 값: 꺼져 있음 (0: CPU 모드, 1: GPU 모드)
   loadedModels: {
     similarity: false,
-    translation: false,
     llm: false
   },
   error: null
@@ -31,12 +29,27 @@ const state = {
 
 const pipelines = {
   similarity: null,
-  translation: null,
   llm: null
 };
 
-// 불법도박 및 불법스팸 앵커 기준 임베딩 벡터 캐시
-let cachedGamblingEmbeddings = null;
+function buildInferenceExcerpt(text, maxChars, focusTerm = '') {
+  const source = String(text || '')
+    .normalize('NFKC')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const limit = Math.max(40, Number(maxChars) || 180);
+  if (source.length <= limit) return source;
+
+  const focus = String(focusTerm || '').normalize('NFKC').trim();
+  const focusIndex = focus ? source.toLowerCase().indexOf(focus.toLowerCase()) : -1;
+  if (focusIndex < 0) return source.slice(0, limit).trim();
+
+  const beforeLength = Math.floor((limit - Math.min(focus.length, limit)) / 2);
+  let start = Math.max(0, focusIndex - beforeLength);
+  if (start + limit > source.length) start = Math.max(0, source.length - limit);
+  return source.slice(start, start + limit).trim();
+}
 
 // t_defense 테이블 기반 인메모리 스팸 벡터 캐시 ([{ id, text, vector: Float32Array }])
 let inMemorySpamVectors = [];
@@ -61,17 +74,107 @@ function setCachedValue(cache, key, value, maxSize) {
   }
 }
 
-const GAMBLING_ANCHOR_SENTENCES = [
-  '카지노 첫충전 보너스 코드 지급 바카라 슬롯',
-  '먹튀검증 안전놀이터 문의 텔레그램 메이저 사이트',
-  '무료 슬롯 체험 머니 즉시 지급 가입 혜택',
-  '사설 토토 배팅 환전 첫충 매충 이벤트',
-  '사설 포커 온라인 홀덤 사이공포커 환전 베팅',
-  '무서류 당일 비대면 소액 대출 급전 비상금',
-  '풀싸롱 호빠 룸싸롱 예약 문의 주점 전화번호',
-  '강남 가라오케 셔츠룸 하이퍼블릭 유흥 예약 문의',
-  '출장안마 조건만남 출장마사지 성매매 예약 문의'
-];
+const modelWeightManifestCache = new Map();
+
+function formatFileSize(bytes) {
+  const value = Number(bytes) || 0;
+  if (value >= 1024 * 1024 * 1024) return `${(value / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${value} B`;
+}
+
+function getWeightFileMatcher(dtype) {
+  const normalized = String(dtype || '').toLowerCase();
+  if (normalized === 'q8') return /(?:_quantized|_q8)\.onnx(?:_data)?$/i;
+  if (normalized === 'int8') return /_int8\.onnx(?:_data)?$/i;
+  if (normalized === 'uint8') return /_uint8\.onnx(?:_data)?$/i;
+  if (normalized === 'q4f16') return /_q4f16\.onnx(?:_data)?$/i;
+  if (normalized === 'q4') return /_q4\.onnx(?:_data)?$/i;
+  if (normalized === 'fp16') return /_fp16\.onnx(?:_data)?$/i;
+  return /(?:^|\/)(?:model|encoder_model|decoder_model|decoder_with_past_model)\.onnx(?:_data)?$/i;
+}
+
+async function getModelWeightManifest(modelId, dtype) {
+  const cacheKey = `${modelId}|${dtype || ''}`;
+  if (modelWeightManifestCache.has(cacheKey)) return modelWeightManifestCache.get(cacheKey);
+
+  let files = [];
+  try {
+    if (typeof fetch !== 'function') return files;
+    const encodedModelId = String(modelId).split('/').map(encodeURIComponent).join('/');
+    const url = `https://huggingface.co/api/models/${encodedModelId}/tree/main/onnx?recursive=true&expand=true`;
+    const response = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const rows = await response.json();
+    const matcher = getWeightFileMatcher(dtype);
+    files = (Array.isArray(rows) ? rows : [])
+      .filter(item => item && item.type === 'file' && matcher.test(String(item.path || '')) && Number(item.size) > 0)
+      .map(item => ({ path: String(item.path).replace(/\\/g, '/'), size: Number(item.size) }));
+
+    if (files.length > 0) {
+      const totalBytes = files.reduce((sum, item) => sum + item.size, 0);
+      console.log(`[AI Pipeline] ${modelId} ${dtype || ''} 가중치 용량 확인: ${formatFileSize(totalBytes)}`);
+    }
+  } catch (error) {
+    console.warn(`[AI Pipeline] ${modelId} 가중치 용량 사전 확인 실패, 다운로드 콜백 기준으로 계산합니다: ${error.message}`);
+  }
+
+  modelWeightManifestCache.set(cacheKey, files);
+  return files;
+}
+
+async function createModelProgressCallback(modelId, dtype, stageStart, stageEnd, label) {
+  const expectedFiles = await getModelWeightManifest(modelId, dtype);
+  const observedFiles = new Map();
+  let displayedRatio = 0;
+  let useExpectedManifest = expectedFiles.length > 0;
+
+  return (info) => {
+    if (!info) return;
+    const fileName = String(info.file || info.name || '').replace(/\\/g, '/');
+    if (!/\.onnx(?:_data)?$/i.test(fileName)) return;
+
+    const expected = expectedFiles.find(item =>
+      fileName.endsWith(item.path) || fileName.endsWith(`/${item.path.split('/').pop()}`) || item.path.endsWith(`/${fileName}`)
+    );
+    if (!expected && expectedFiles.length > 0) useExpectedManifest = false;
+    const callbackTotal = Number(info.total);
+    const total = expected ? expected.size : (Number.isFinite(callbackTotal) && callbackTotal > 0 ? callbackTotal : 0);
+    if (total <= 0) return;
+
+    let loaded = Number(info.loaded);
+    if (!Number.isFinite(loaded) && typeof info.progress === 'number') {
+      loaded = total * Math.max(0, Math.min(100, info.progress)) / 100;
+    }
+    if (info.status === 'done') loaded = total;
+    if (!Number.isFinite(loaded)) return;
+
+    const key = expected ? expected.path : fileName;
+    observedFiles.set(key, { loaded: Math.max(0, Math.min(total, loaded)), total });
+
+    let totalBytes = 0;
+    let loadedBytes = 0;
+    if (useExpectedManifest) {
+      totalBytes = expectedFiles.reduce((sum, item) => sum + item.size, 0);
+      loadedBytes = expectedFiles.reduce((sum, item) => {
+        const current = observedFiles.get(item.path);
+        return sum + (current ? Math.min(item.size, current.loaded) : 0);
+      }, 0);
+    } else {
+      for (const current of observedFiles.values()) {
+        totalBytes += current.total;
+        loadedBytes += current.loaded;
+      }
+    }
+    if (totalBytes <= 0) return;
+
+    displayedRatio = Math.max(displayedRatio, Math.min(1, loadedBytes / totalBytes));
+    const stageProgress = stageStart + displayedRatio * (stageEnd - stageStart);
+    state.progress = Math.max(state.progress, Math.round(stageProgress));
+    state.detail = `${label} (${formatFileSize(loadedBytes)} / ${formatFileSize(totalBytes)}, ${Math.round(displayedRatio * 100)}%)`;
+  };
+}
 
 async function getTransformers() {
   if (!transformersModule) {
@@ -97,11 +200,9 @@ function getStatus() {
     ...state,
     modelsConfig: {
       similarity: aiConfig.similarity.modelId,
-      translation: aiConfig.translation.modelId,
       llm: aiConfig.llm.modelId,
       dtypes: {
         similarity: aiConfig.similarity.dtype,
-        translation: aiConfig.translation.dtype,
         llm: aiConfig.llm.dtype
       }
     }
@@ -176,10 +277,8 @@ async function setGpuMode(enabled) {
   if (state.status === 'ready') {
     state.status = 'idle';
     pipelines.similarity = null;
-    pipelines.translation = null;
     pipelines.llm = null;
-    cachedGamblingEmbeddings = null;
-    state.loadedModels = { similarity: false, translation: false, llm: false };
+    state.loadedModels = { similarity: false, llm: false };
     startLoading();
   }
   return state.gpuEnabled ? 1 : 0;
@@ -194,11 +293,26 @@ async function startLoading() {
     return state;
   }
 
+  const requiredModels = [
+    ['AI_SIMILARITY_MODEL', aiConfig.similarity.modelId],
+    ['AI_LLM_MODEL', aiConfig.llm.modelId]
+  ];
+  const missingModels = requiredModels.filter(([, modelId]) => !String(modelId || '').trim()).map(([name]) => name);
+  if (missingModels.length > 0) {
+    const message = `AI 모델이 지정되지 않았습니다: ${missingModels.join(', ')}`;
+    state.status = 'error';
+    state.progress = 0;
+    state.currentModel = '';
+    state.error = message;
+    state.detail = message;
+    return state;
+  }
+
   state.status = 'loading';
   state.progress = 5;
   state.error = null;
   state.currentModel = aiConfig.similarity.modelId;
-  state.detail = `1/3단계: ${aiConfig.similarity.name} 로딩 중 (${aiConfig.similarity.dtype})...`;
+  state.detail = `1/2단계: ${aiConfig.similarity.name} 로딩 중 (${aiConfig.similarity.dtype})...`;
 
   // 백그라운드 비동기 로딩 시작
   (async () => {
@@ -207,54 +321,30 @@ async function startLoading() {
 
       // [1단계] 유사도/임베딩 모델
       state.currentModel = aiConfig.similarity.modelId;
-      state.detail = `1/3단계: ${aiConfig.similarity.name} 로딩 중 (${aiConfig.similarity.dtype})...`;
+      state.detail = `1/2단계: ${aiConfig.similarity.name} 로딩 중 (${aiConfig.similarity.dtype})...`;
+      const similarityProgressCallback = await createModelProgressCallback(
+        aiConfig.similarity.modelId, aiConfig.similarity.dtype, 5, 40, '1/2단계: 유사도 모델 파일 적재 중'
+      );
       pipelines.similarity = await loadPipelineWithFallback(
         pipeline,
         aiConfig.similarity.task,
         aiConfig.similarity.modelId,
         {
           dtype: aiConfig.similarity.dtype,
-          progress_callback: (info) => {
-            if (info.status === 'progress' && typeof info.progress === 'number') {
-              state.progress = Math.round(5 + (info.progress * 0.20));
-              state.detail = `1/3단계: 유사도 모델 파일 적재 중 (${Math.round(info.progress)}%)`;
-            }
-          }
+          progress_callback: similarityProgressCallback
         }
       );
       state.loadedModels.similarity = true;
-      state.progress = 25;
+      state.progress = 40;
 
-      // [2단계] 한국어 -> 영어 초경량 번역 모델
-      state.currentModel = aiConfig.translation.modelId;
-      state.detail = `2/3단계: ${aiConfig.translation.name} 로딩 중 (${aiConfig.translation.dtype})...`;
-      pipelines.translation = await loadPipelineWithFallback(
-        pipeline,
-        aiConfig.translation.task,
-        aiConfig.translation.modelId,
-        {
-          dtype: aiConfig.translation.dtype,
-          progress_callback: (info) => {
-            if (info.status === 'progress' && typeof info.progress === 'number') {
-              state.progress = Math.round(25 + (info.progress * 0.25));
-              state.detail = `2/3단계: 한-영 번역 모델 파일 적재 중 (${Math.round(info.progress)}%)`;
-            }
-          }
-        }
-      );
-      state.loadedModels.translation = true;
-      state.progress = 50;
-
-      // [3단계] 핵심 판정 모델 (스팸 분류 / LLM 추론)
+      // [2단계] 핵심 판정 모델 (스팸 분류 / LLM 추론)
       state.currentModel = aiConfig.llm.modelId;
-      state.detail = `3/3단계: ${aiConfig.llm.name} 로딩 중...`;
+      state.detail = `2/2단계: ${aiConfig.llm.name} 로딩 중...`;
+      const llmProgressCallback = await createModelProgressCallback(
+        aiConfig.llm.modelId, aiConfig.llm.dtype, 40, 98, `2/2단계: ${aiConfig.llm.modelId} 적재 중`
+      );
       const llmLoadOpts = {
-        progress_callback: (info) => {
-          if (info.status === 'progress' && typeof info.progress === 'number') {
-            state.progress = Math.round(50 + (info.progress * 0.48));
-            state.detail = `3/3단계: ${aiConfig.llm.modelId} 적재 중 (${Math.round(info.progress)}%)`;
-          }
-        }
+        progress_callback: llmProgressCallback
       };
       if (aiConfig.llm.dtype) {
         llmLoadOpts.dtype = aiConfig.llm.dtype;
@@ -270,20 +360,7 @@ async function startLoading() {
       state.status = 'ready';
       state.currentModel = '전체 준비 완료';
       state.detail = `AI 모델 준비 완료 (${state.deviceMode})`;
-      console.log(`[AI Pipeline] 3단계 q8 탐지 모델 로딩 완료 (100%, ${state.deviceMode})`);
-
-      // 앵커 문장 임베딩 사전 캐싱
-      try {
-        const anchorEmbeddings = [];
-        for (const s of GAMBLING_ANCHOR_SENTENCES) {
-          const out = await pipelines.similarity(s, { pooling: 'mean', normalize: true });
-          anchorEmbeddings.push(Array.from(out.data));
-        }
-        cachedGamblingEmbeddings = anchorEmbeddings;
-        console.log('[AI Pipeline] 불법광고 앵커 벡터 사전 캐싱 완료');
-      } catch (cacheErr) {
-        console.warn('[AI Pipeline] 앵커 벡터 캐싱 실패:', cacheErr.message);
-      }
+      console.log(`[AI Pipeline] 2단계 q8 탐지 모델 로딩 완료 (100%, ${state.deviceMode})`);
 
       // t_defense 학습된 패턴 인메모리 캐시 자동 적재
       try {
@@ -422,16 +499,17 @@ function getSpamVectorCount() {
  * - 초고속 수학 내적(Dot Product) 연산 (0.001초 미만)
  */
 async function calculateMaxSpamSimilarity(inputText) {
-  if (!inputText || !String(inputText).trim() || inMemorySpamVectors.length === 0) {
+  const judgmentText = stripLeadingTitleMarkers(inputText);
+  if (!judgmentText || inMemorySpamVectors.length === 0) {
     return { maxSim: 0, matchedSpam: null };
   }
 
-  const cacheKey = String(inputText).replace(/\s+/g, ' ').trim().toLowerCase();
+  const cacheKey = judgmentText.replace(/\s+/g, ' ').trim().toLowerCase();
   const cachedResult = getCachedValue(spamSimilarityCache, cacheKey);
   if (cachedResult) return cachedResult;
 
   // 1회 벡터화
-  const inputVec = await generateEmbedding(inputText);
+  const inputVec = await generateEmbedding(judgmentText);
   if (!inputVec) return { maxSim: 0, matchedSpam: null };
 
   let maxSim = 0;
@@ -451,8 +529,8 @@ async function calculateMaxSpamSimilarity(inputText) {
     }
   }
 
-  if (maxSim >= 0.70) {
-    console.log(`[dragonkue 유사도 매칭] t_defense ${inMemorySpamVectors.length}건 비교 | 최고유사도: ${(maxSim * 100).toFixed(1)}% | 매칭패턴: '${(matchedSpam || '').slice(0, 25)}' | 텍스트: '${inputText.slice(0, 25)}'`);
+  if (maxSim >= aiConfig.inference.similarityReviewThreshold) {
+    console.log(`[dragonkue 유사도 매칭] t_defense ${inMemorySpamVectors.length}건 비교 | 최고유사도: ${(maxSim * 100).toFixed(1)}% | 매칭패턴: '${(matchedSpam || '').slice(0, 25)}' | 텍스트: '${judgmentText.slice(0, 25)}'`);
   }
 
   const result = {
@@ -488,23 +566,18 @@ async function saveDetectLog(logData) {
 }
 
 /**
- * 3단계 파이프라인을 통한 한국어 문장 판정
+ * 2단계 파이프라인을 통한 한국어 문장 판정
  * 1단계: multilingual-e5 벡터 유사도
- * 2단계: opus-mt-ko-en 영문 번역
- * 3단계: Qwen2.5-0.5B 최종 의도 분류
+ * 2단계: 설정된 판정 모델의 최종 의도 분류
  */
 // 동일 문장 AI 판정 결과 고속 메모리 캐시 (문장 정규화 키 -> 판정 결과 객체)
 const sentenceResultCache = new Map();
-const memoTranslationCache = new Map();
 const MAX_SENTENCE_RESULT_CACHE_SIZE = 2000;
-const MAX_MEMO_TRANSLATION_CACHE_SIZE = 500;
-// 이 점수부터는 유사도 자체를 강한 스팸 근거로 사용한다.
-// 0.70 이상 0.85 미만은 계속 LLM이 확인하되 유사도만으로 위반을 확정하지 않는다.
-const SIMILARITY_AUTO_BLOCK_THRESHOLD = 0.85;
+const CLASSIFICATION_POLICY_VERSION = 'site-external-ad-single-stage-v6';
+const SIMILARITY_AUTO_BLOCK_THRESHOLD = aiConfig.inference.similarityBlockThreshold;
 
 function clearSentenceCache() {
   sentenceResultCache.clear();
-  memoTranslationCache.clear();
   console.log('[AI Pipeline] 문장 분석 결과 캐시 초기화 완료');
 }
 
@@ -522,27 +595,38 @@ function isDegenerateRepetition(text) {
   return false;
 }
 
-// 위반 항목을 깔끔한 카테고리 판정 문구로 통일 반환하는 함수 (영어 횡설수설 노출 방지)
-function getCleanCategoryLabel(kw, memo) {
-  const k = String(kw || '').toLowerCase();
-  const m = String(memo || '').toLowerCase();
-  if (/(?:도박|카지노|바카라|슬롯|토토|홀덤|포커|베팅|꽁머니|환전|머니상|먹튀|놀이터)/i.test(k) || /(?:도박|카지노|사행)/i.test(m)) {
-    return '불법 사행성/도박 광고 판정';
-  }
-  if (/(?:성매매|조건만남|호빠|풀싸롱|룸싸롱|출장안마|출장마사지|오피|유흥|셔츠룸|가라오케)/i.test(k) || /(?:성매매|유흥)/i.test(m)) {
-    return '불법 유흥/성매매 광고 판정';
-  }
-  if (/(?:대출|급전|대포통장|대포폰|개인돈|카드현금화|소액결제|통장팝니다|선불유심)/i.test(k) || /(?:대출|금융|통장)/i.test(m)) {
-    return '불법 대출/금융사기 광고 판정';
-  }
-  if (/(?:비아그라|시알리스|발기부전|정력제|최음제)/i.test(k) || /(?:의약품)/i.test(m)) {
-    return '불법 의약품 광고 판정';
-  }
-  if (/(?:찌라시|백링크|도배|프로그램|텔레|상위노출)/i.test(kw) || /(?:스팸)/i.test(m)) {
-    return '불법 홍보/스팸 광고 판정';
-  }
-  return '노출 텍스트 의심 패턴 판정';
+// 판정 이유는 특정 단어 목록에 의존하지 않고 LLM의 공통 정책으로 표시한다.
+function getCleanCategoryLabel() {
+  return '사이트와 무관한 광고 또는 검색 오염 판정';
 }
+
+async function summarizeSiteProfile(sourceText) {
+  const source = String(sourceText || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 360);
+  if (!source || state.status !== 'ready' || !pipelines.llm || aiConfig.llm.task === 'text-classification') return source;
+
+  try {
+    const messages = [
+      { role: 'system', content: '입력에 나온 운영 주체와 제공 내용을 "운영 주체 | 제공 내용" 형식의 짧은 명사구로 답하라. 입력에 없는 내용은 만들지 마라.' },
+      { role: 'user', content: '사이트 정보: ' + source + '\n사이트 성격:' }
+    ];
+    const result = await pipelines.llm(messages, {
+      max_new_tokens: 32,
+      do_sample: false,
+      return_full_text: false
+    });
+    const generated = result && result[0] ? result[0].generated_text : '';
+    const answer = Array.isArray(generated)
+      ? String((([...generated].reverse().find(item => item && item.role === 'assistant')) || {}).content || '')
+      : String(generated || '');
+    const cleaned = answer.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
+    const copiedInstruction = /운영\s*주체|제공\s*내용|사이트\s*정보|사이트\s*성격/.test(cleaned);
+    return !cleaned || copiedInstruction || isDegenerateRepetition(cleaned) ? source : cleaned;
+  } catch (error) {
+    console.warn('[Site Profile Summary Error]', error.message);
+    return source;
+  }
+}
+
 
 async function classifyText(koreanText, context = {}) {
   if (state.status !== 'ready') {
@@ -565,12 +649,22 @@ async function classifyText(koreanText, context = {}) {
     };
   }
 
+  const judgmentText = stripLeadingTitleMarkers(raw);
+  const llmInputText = buildInferenceExcerpt(
+    judgmentText,
+    aiConfig.inference.maxInputChars,
+    context.matchedKeyword
+  );
+
   // [캐시 확인] 이미 분석한 이력이 있는 동일 문장은 AI 추론 없이 0초 만에 즉시 반환
   const matchedMemo = String(context.matchedMemo || '').trim();
+  const siteProfile = String(context.siteProfile || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 240);
   const cacheKey = JSON.stringify([
-    raw.replace(/\s+/g, ' ').toLowerCase(),
+    CLASSIFICATION_POLICY_VERSION,
+    llmInputText.replace(/\s+/g, ' ').toLowerCase(),
     String(context.matchedKeyword || ''),
     matchedMemo,
+    siteProfile,
     Boolean(context.isPolluted)
   ]);
   const cachedSentenceResult = getCachedValue(sentenceResultCache, cacheKey);
@@ -595,22 +689,17 @@ async function classifyText(koreanText, context = {}) {
     return { ...cached, koreanText: raw };
   }
 
-  // [1단계] 유사도 모델 연산 (기본 앵커 + t_defense 인메모리 스팸 벡터 전체 교차 비교)
-  let maxSimilarity = 0;
-  if (pipelines.similarity) {
+  // [1단계] DetectEngine에서 계산한 점수를 재사용하고, 직접 호출일 때만 벡터를 계산한다.
+  const suppliedSimilarity = Number(context.similarityScore);
+  let maxSimilarity = Number.isFinite(suppliedSimilarity)
+    ? Math.max(0, Math.min(1, suppliedSimilarity))
+    : 0;
+  if (pipelines.similarity && !Number.isFinite(suppliedSimilarity)) {
     try {
-      const out = await pipelines.similarity(raw, { pooling: 'mean', normalize: true });
+      const out = await pipelines.similarity(llmInputText, { pooling: 'mean', normalize: true });
       const inputVec = Array.from(out.data);
 
-      // 1. 기본 앵커 문장 비교
-      if (cachedGamblingEmbeddings) {
-        for (const anchorVec of cachedGamblingEmbeddings) {
-          const sim = cosineSimilarity(inputVec, anchorVec);
-          if (sim > maxSimilarity) maxSimilarity = sim;
-        }
-      }
-
-      // 2. t_defense 학습된 스팸 벡터 전체 비교 (초고속 내적 연산)
+      // t_defense 학습된 스팸 벡터 전체 비교
       if (inMemorySpamVectors && inMemorySpamVectors.length > 0) {
         for (let idx = 0; idx < inMemorySpamVectors.length; idx++) {
           const v = inMemorySpamVectors[idx].vector;
@@ -633,71 +722,22 @@ async function classifyText(koreanText, context = {}) {
   // 앵커 벡터와의 코사인 유사도를 측정하며, 저유사도(<0.55)라고 해서 절대 독단적으로 정상 처리하지 않음 (스팸은 난수표식 키워드 나열이 많으므로)
   const isHighSimSpam = maxSimilarity >= SIMILARITY_AUTO_BLOCK_THRESHOLD;
 
-  // [2단계] 한국어 -> 영어 번역
-  let englishText = raw;
-  const requiresTranslation = /[가-힣ㄱ-ㅎㅏ-ㅣ]/.test(raw);
-  let translationSucceeded = !requiresTranslation;
-  if (requiresTranslation && pipelines.translation) {
-    try {
-      const transOpts = { ...(aiConfig.translation.options || {}) };
-      const chunks = splitTextForTranslation(raw, aiConfig.translation.maxInputChars);
-      const translated = [];
-      for (const chunk of chunks) {
-        const transRes = await pipelines.translation(chunk, transOpts);
-        const value = transRes && transRes[0] && transRes[0].translation_text;
-        if (!value) throw new Error('번역 결과가 비어 있습니다.');
-        translated.push(value.trim());
-      }
-      englishText = translated.join(' ');
-      translationSucceeded = translated.length === chunks.length;
-    } catch (transErr) {
-      console.warn('[Translation Error]', transErr.message);
-    }
-  }
+  const englishText = llmInputText;
 
-  if (translationSucceeded && matchedMemo && pipelines.translation) {
-    try {
-      let translatedMemo = memoTranslationCache.get(matchedMemo);
-      if (!translatedMemo) {
-        const englishMeaning = matchedMemo.match(/(?:^|\|)\s*English:\s*([^|]+)\s*$/i);
-        if (englishMeaning) {
-          translatedMemo = englishMeaning[1].trim();
-        } else if (/[가-힣ㄱ-ㅎㅏ-ㅣ]/.test(matchedMemo)) {
-          const transOpts = { ...(aiConfig.translation.options || {}) };
-          const memoChunks = splitTextForTranslation(matchedMemo, aiConfig.translation.maxInputChars);
-          const translated = [];
-          for (const chunk of memoChunks) {
-            const transRes = await pipelines.translation(chunk, transOpts);
-            const value = transRes && transRes[0] && transRes[0].translation_text;
-            if (!value) throw new Error('메모 번역 결과가 비어 있습니다.');
-            translated.push(value.trim());
-          }
-          translatedMemo = translated.join(' ');
-        } else {
-          translatedMemo = matchedMemo;
-        }
-        setCachedValue(memoTranslationCache, matchedMemo, translatedMemo, MAX_MEMO_TRANSLATION_CACHE_SIZE);
-      }
-      englishText = `${englishText}\nMatched term meaning: ${translatedMemo}`;
-    } catch (memoError) {
-      console.warn('[Memo Translation Error]', memoError.message);
-    }
-  }
-
-  // [3단계] 분류/생성 모델 판정 (text-classification 또는 생성형 LLM)
+  // [2단계] 분류/생성 모델 판정 (text-classification 또는 생성형 LLM)
   let isViolation = false;
   let reason = '정상적인 콘텐츠입니다.';
   let confidence = Math.round(maxSimilarity * 100);
   let promptText = '';
   let responseText = '';
 
-  if (pipelines.llm && !(aiConfig.llm.task === 'text-classification' && !translationSucceeded)) {
+  if (pipelines.llm) {
     try {
-      // 번역된 원문과 일치한 단어의 뜻을 함께 판정
+      // 원문과 일치한 단어의 뜻을 함께 판정
       const keywordContext = '';
 
       if (aiConfig.llm.task === 'text-classification') {
-        // [RoBERTa-Spam-ONNX 초고속 스팸 분류 추론 (0.02초, 99% 정밀도)]
+        // 텍스트 분류 모델 판정
         promptText = `[Spam Classification] "${englishText}"`;
         const rawOutput = await pipelines.llm(englishText);
         const items = Array.isArray(rawOutput) ? (Array.isArray(rawOutput[0]) ? rawOutput[0] : rawOutput) : [rawOutput];
@@ -747,75 +787,66 @@ async function classifyText(koreanText, context = {}) {
           confidence = Math.round((1 - spamScore) * 100);
         }
       } else {
-        // [기존 Qwen2.5-0.5B 생성형 모델 추론 로직 (보존 및 토큰 최적화)]
-        promptText = `You are a strict web safety content filter.${keywordContext}
-Determine if the following text is an ILLEGAL advertisement (such as illegal casino, gambling bonuses, slot machines, illegal prostitution/escort, loan shark scams).
-NOTE: Official announcements, public unions, schools, donation accounts, membership fees, and public notices are NORMAL and NOT violations.
+        const generationOptions = {
+          max_new_tokens: 4,
+          do_sample: false,
+          return_full_text: false
+        };
+        const readGeneratedText = (result, sentPrompt) => {
+          const generated = result && result[0] ? result[0].generated_text : '';
+          if (Array.isArray(generated)) {
+            const assistantMessage = [...generated].reverse().find(item => item && item.role === 'assistant');
+            return String((assistantMessage && assistantMessage.content) || '').trim();
+          }
+          return String(generated || '').replace(sentPrompt, '').trim();
+        };
+        const normalizeDecision = (value) => {
+          const rawDecision = String(value || '').trim();
+          if (/^0(?:\b|$)/.test(rawDecision) || /^NORMAL\b/i.test(rawDecision)) return 'NORMAL';
+          if (/^1(?:\b|$)/.test(rawDecision) || /^VIOLATION\b/i.test(rawDecision)) return 'VIOLATION';
+          return rawDecision;
+        };
+        const runDecisionOnce = async (systemText, userText) => {
+          const sentPrompt = systemText + '\n\n' + userText;
+          console.log(`[AI Inference Start] type=classification inputChars=${llmInputText.length}`);
+          const output = await pipelines.llm([
+            { role: 'system', content: systemText },
+            { role: 'user', content: userText }
+          ], generationOptions);
+          const decision = normalizeDecision(readGeneratedText(output, sentPrompt));
+          console.log('[AI Inference End] type=classification');
+          if (isDegenerateRepetition(decision)) return '';
+          return /^(?:NORMAL|VIOLATION)\b/i.test(decision) ? decision : '';
+        };
 
-Text: "${englishText}"
+        const runDecision = async (systemText, userText) => {
+          const first = await runDecisionOnce(systemText, userText);
+          if (first) return first;
+          return runDecisionOnce(systemText, userText);
+        };
 
-Respond ONLY in this format:
-VIOLATION: [brief reason]
-or
-NORMAL: [brief reason]`;
+        const decisionSystem = '먼저 정보 전달 글인지 판단하라. 기관의 발표, 조치, 단속, 통계, 보도, 공지, 주의, 경고, 예방, 교육이면 0. 그 외에 상품·서비스·사이트·연락처의 판매, 홍보, 접속 유도가 명확하거나 검색용 단어 나열이면 1. 불법 관련 단어만으로 1을 고르지 마라. 모호하면 0. 숫자만 답하라.';
+        const decisionUser = '사이트: ' + (siteProfile || '확인 불가') + '\n글: ' + llmInputText + '\n답:';
+        const decision = await runDecision(decisionSystem, decisionUser);
 
-        // 기존 설정: max_new_tokens: 35, do_sample: false
-        // 횡설수설 억제를 위해 토큰 제한 및 반복 방지 페널티 적용 (기존 설정 주석 보존)
-        const output = await pipelines.llm(promptText, {
-          max_new_tokens: 10,
-          /* max_new_tokens: 35, // 기존 백업 */
-          temperature: 0.1,
-          repetition_penalty: 1.2,
-          do_sample: false
-        });
+        promptText = decisionSystem + '\n\n' + decisionUser;
+        responseText = decision === 'VIOLATION' ? '1' : decision === 'NORMAL' ? '0' : '?';
+        isViolation = decision === 'VIOLATION';
 
-        const generatedText = (output && output[0] && output[0].generated_text) ? output[0].generated_text : '';
-        responseText = generatedText.replace(promptText, '').trim();
-
-        // 횡설수설/반복 퇴행 감지 (단어 반복, 파편 기호 반복 등)
-        const isDegenerate = isDegenerateRepetition(responseText);
-
-        // AI 판정 결과 정밀 파싱
-        // 1. 정상 판정 여부 확인 (NORMAL로 시작하거나 명시적으로 not violation인 경우)
-        const isExplicitNormal = !isDegenerate && (/^NORMAL\b/i.test(responseText) || /not a violation/i.test(responseText) || /no violation/i.test(responseText) || /is not illegal/i.test(responseText) || /is normal/i.test(responseText));
-
-        // 2. 불법 판정 여부 확인 (VIOLATION으로 시작하고, 횡설수설 반복이 아닐 때만 인정)
-        const isExplicitViolation = !isDegenerate && (/^VIOLATION\b/i.test(responseText) || (!isExplicitNormal && /\b(?:illegal\s+(?:casino|gambling|prostitution|escort|betting|scam))\b/i.test(responseText)));
-
-        // 3. detectEngine이 이미 키워드/패턴 필터링을 완료한 상태 - 여기서는 오염 여부와 유사도만 판단
-        const hasObviousIllegalKeyword = context.isPolluted || isHighSimSpam;
-
-        if (isExplicitViolation || (hasObviousIllegalKeyword && !isExplicitNormal)) {
-          isViolation = true;
+        if (isViolation) {
           reason = getCleanCategoryLabel(context.matchedKeyword, context.matchedMemo);
           confidence = Math.max(confidence, 90);
-        } else if (isExplicitNormal) {
-          if (hasObviousIllegalKeyword) {
-            isViolation = true;
-            reason = getCleanCategoryLabel(context.matchedKeyword, context.matchedMemo);
-            confidence = Math.max(confidence, 88);
-          } else {
-            isViolation = false;
-            reason = '정상 웹 콘텐츠 판정';
-          }
         } else {
-          // 불명확한 응답이거나 LLM 횡설수설 퇴행인 경우: 명백한 오염 키워드가 있을 때만 불법, 없으면 정상!
-          if (hasObviousIllegalKeyword) {
-            isViolation = true;
-            reason = getCleanCategoryLabel(context.matchedKeyword, context.matchedMemo);
-            confidence = Math.max(confidence, 85);
-          } else {
-            isViolation = false;
-            reason = '정상 안내문 또는 일반 콘텐츠 판정';
-          }
+          reason = decision === 'NORMAL'
+            ? '사이트와 무관한 외부 광고가 아닌 정상 콘텐츠'
+            : '판정 모델이 유효한 답을 반환하지 않아 위반 확정 보류';
+          confidence = Math.max(0, Math.min(confidence, 84));
         }
       }
     } catch (llmErr) {
       console.warn('[LLM Inference Error]', llmErr.message);
-      if (maxSimilarity >= SIMILARITY_AUTO_BLOCK_THRESHOLD) {
-        isViolation = true;
-        reason = `문맥 벡터 유사도 고위험 임계치(${SIMILARITY_AUTO_BLOCK_THRESHOLD.toFixed(2)}) 이상으로 위반 감지`;
-      }
+      isViolation = false;
+      reason = '판정 모델 오류로 위반 확정 보류';
     }
   } else {
     if (maxSimilarity >= SIMILARITY_AUTO_BLOCK_THRESHOLD) {
@@ -854,7 +885,7 @@ NORMAL: [brief reason]`;
     similarityVal: Number(maxSimilarity.toFixed(3)),
     isIllegal: isViolation ? 1 : 0,
     confidence,
-    modelName: aiConfig.llm.modelId || 'RoBERTa-Spam-ONNX',
+    modelName: aiConfig.llm.modelId,
     deviceMode: state.deviceMode
   });
 
@@ -865,6 +896,7 @@ NORMAL: [brief reason]`;
 module.exports = {
   getStatus,
   startLoading,
+  summarizeSiteProfile,
   classifyText,
   saveDetectLog,
   clearSentenceCache,

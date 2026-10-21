@@ -11,6 +11,7 @@ const { buildResultReports, uniqueFindingRows } = require('../../service/resultR
 const asyncReqHandler = require('../../service/asyncReqHandler');
 const llmPipelineService = require('../../service/llmPipelineService');
 const spamTrainService = require('../../service/spamTrainService');
+const detectEngine = require('../../service/detectEngine');
 
 function loadSession(req, res, next) {
   const authAdmin = req.session && req.session.authAdmin ? req.session.authAdmin : null;
@@ -20,6 +21,11 @@ function loadSession(req, res, next) {
 
 function checkPermission(req, res, next) {
   next();
+}
+
+function refreshDetectionCaches() {
+  detectEngine.invalidateCleanroomPatternCache();
+  llmPipelineService.clearSentenceCache();
 }
 
 function normalizeRequiredTerms(value) {
@@ -552,6 +558,7 @@ router.post('/api/cleanroom', checkPermission, asyncReqHandler(async function(re
             required_terms: type === 'SUSPECT' ? normalizeRequiredTerms(required_terms) : null,
             memo: memo ? memo.trim() : ''
         });
+        refreshDetectionCaches();
         res.json({ success: true, message: '패턴이 정상 등록되었습니다.' });
     } catch (err) {
         if (String(err).includes('UNIQUE') || String(err).includes('constraint')) {
@@ -602,6 +609,7 @@ router.put('/api/cleanroom/status', checkPermission, asyncReqHandler(async funct
             pattern_type: targetType,
             memo: finalMemo
         });
+        refreshDetectionCaches();
         res.json({ success: true, message: '상태가 성공적으로 변경되었습니다.' });
     } catch (err) {
         if (String(err).includes('UNIQUE') || String(err).includes('constraint')) {
@@ -645,6 +653,7 @@ router.put('/api/cleanroom/text', checkPermission, asyncReqHandler(async functio
             required_terms: currentType === 'SUSPECT' ? (normalizeRequiredTerms(required_terms) || '') : null,
             memo: memo ? memo.trim() : ''
         });
+        refreshDetectionCaches();
         res.json({ success: true, message: '패턴 문구가 정상 수정되었습니다.' });
     } catch (err) {
         if (String(err).includes('UNIQUE') || String(err).includes('constraint')) {
@@ -661,10 +670,9 @@ router.delete('/api/cleanroom/:id', checkPermission, asyncReqHandler(async funct
         return res.status(400).json({ success: false, message: '삭제할 식별자가 누락되었습니다.' });
     }
     await commonDAO.execute_query('cleanroomMapper.deleteCleanroom', { id: Number(id) });
+    refreshDetectionCaches();
     res.json({ success: true, message: '패턴이 정상 삭제되었습니다.' });
 }));
-
-const detectEngine = require('../../service/detectEngine');
 
 router.get('/api/detect/search-keywords', checkPermission, asyncReqHandler(async function(req, res) {
     const keywords = String(process.env.SEARCH_DORK_KEYWORDS || '카톡,텔레')
@@ -796,7 +804,7 @@ router.get('/api/detect/result-json', checkPermission, asyncReqHandler(async fun
 
 // result.json 저장 위치 탐색기 폴더 열기 API (Electron 및 데스크톱 환경 지원)
 router.post('/api/detect/open-result-folder', checkPermission, asyncReqHandler(async function(req, res) {
-    const resultJsonPath = path.join(__dirname, '..', '..', 'result.json');
+    const resultJsonPath = path.join(config.paths.outputDir, 'result.json');
     if (!fs.existsSync(resultJsonPath)) {
         return res.status(404).json({ success: false, message: '생성된 result.json 파일이 없습니다.' });
     }

@@ -37,13 +37,13 @@ function uniqueFindingRows(rows) {
 }
 
 function buildResultReports(master, rows) {
-  const start = toIsoTime(master.started_at);
+  const start = toIsoTime(master.started_at) || new Date().toISOString();
   const finish = toIsoTime(master.finished_at) || new Date().toISOString();
   const measuredSeconds = start ? Math.max(0, Math.round((Date.parse(finish) - Date.parse(start)) / 1000)) : 0;
   const elapsed = measuredSeconds > 0 ? measuredSeconds : Math.max(0, Number(master.elapsed_sec) || 0);
   const meta = {
     topic: 'TOPIC',
-    entry_url: master.entry_url,
+    entry_url: String(master.entry_url || ''),
     started_at: start,
     finished_at: finish,
     elapsed_sec: elapsed,
@@ -54,18 +54,19 @@ function buildResultReports(master, rows) {
   const extra = { meta, findings: [] };
   const uniqueRows = uniqueFindingRows(rows);
   for (const row of uniqueRows) {
-    const technique = normalizedTechnique(row.technique);
+    const sourceTechnique = String(row.technique || 'ETC');
+    const technique = normalizedTechnique(sourceTechnique);
 
     const target = STANDARD_TECHNIQUES.has(technique) ? main : extra;
     const finding = {
       id: `f_${String(target.findings.length + 1).padStart(3, '0')}`,
-      url: row.url,
+      url: String(row.url || master.entry_url || ''),
       is_violation: row.is_violation === true || row.is_violation === 1,
-      location: row.location,
-      evidence_text: row.evidence_text,
-      technique
+      location: String(row.location || ''),
+      evidence_text: String(row.evidence_text || ''),
+      technique: target === extra ? 'ETC' : technique
     };
-    if (target === extra) finding.extra_finding = row.extra_finding || '추가 탐지';
+    if (target === extra) finding.extra_finding = String(row.extra_finding || sourceTechnique || '추가 탐지');
     target.findings.push(finding);
   }
 

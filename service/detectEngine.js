@@ -3,7 +3,7 @@
  * - 동일 도메인 재귀 크롤러 및 트리뷰 노드 구축
  * - 가이드 4대 은닉 기법 정밀 분석 (JAMO, HOMOGLYPH, TRANSPARENT, OFFSCREEN)
  * - iframe 내부 요소 식별 (iframe[src="..."] >>> selector)
- * - LLM(Qwen2.5) 및 데이터 정화소(t_cleanroom) 교차 판정
+ * - 설정된 판정 모델 및 데이터 정화소(t_cleanroom) 교차 판정
  * - 차단 및 먹통 방지를 위한 점검 속도(요청 지연시간 delayMs) 제어
  * - 가이드 붙임4 표준 스키마 준수 result.json 생성 및 SQLite DB 저장
  */
@@ -35,7 +35,7 @@ const crawlerConfig = require('../config/crawler.config');
 // 사람다운 랜덤 브라우저 헤더 생성 유틸리티 (.env 연동)
 const { getRandomHumanHeaders } = require('../config/browserHeaders.config');
 const aiModelConfig = require('../config/aiModel.config');
-const { getVisibleCandidateText, splitTextForTranslation } = require('../utils/translationText');
+const { getVisibleCandidateText, splitTextForInference } = require('../utils/inferenceText');
 const { classifyPollutedPattern } = require('../utils/obfuscationTechnique');
 const { buildResultReports } = require('./resultReport');
 const {
@@ -1531,9 +1531,11 @@ class DetectEngine {
     this.workflowPromise = null;
     this.cleanroomPatternCache = null;
     this.cleanroomPatternLoadPromise = null;
+    this.cleanroomPatternCacheVersion = 0;
     this.session = {
       masterId: null,
       masterTitle: null,
+      siteProfile: '',
       entryUrl: '',
       status: 'IDLE', // IDLE, RUNNING, PAUSED, COMPLETED, STOPPED
       startedAt: null,
@@ -1765,6 +1767,8 @@ class DetectEngine {
       const rootDom = htmlparser2.parseDocument(rootHtml);
       const siteTitle = this.extractSiteTitle(rootDom, currentTargetUrl);
       this.session.masterTitle = siteTitle;
+      const siteProfileSource = this.extractSiteProfile(rootDom, siteTitle);
+      this.session.siteProfile = await llmPipelineService.summarizeSiteProfile(siteProfileSource);
       this.session.effectiveRootUrl = currentTargetUrl;
       if (this.session.excludedUrlKeys) {
         this.session.excludedUrlKeys.delete(normalizeUrl(currentTargetUrl));
@@ -2464,6 +2468,46 @@ class DetectEngine {
     return fallback;
   }
 
+  // 시작 화면의 제목, 소개, 주요 메뉴만 모아 사이트 성격 판단 자료로 사용한다.
+  extractSiteProfile(dom, siteTitle = '') {
+    if (!dom || !dom.children) return String(siteTitle || '').trim();
+
+    const clean = value => String(value || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+    const parts = [];
+    const append = (label, value) => {
+      const text = clean(value);
+      if (text) parts.push(label + ': ' + text);
+    };
+
+    append('사이트명', siteTitle);
+
+    const descriptionMeta = domutils.findOne(
+      el => el.type === 'tag' && el.name === 'meta' && el.attribs &&
+        /^(?:description|og:description|twitter:description)$/i.test(String(el.attribs.name || el.attribs.property || '')) &&
+        el.attribs.content,
+      dom.children
+    );
+    if (descriptionMeta) append('소개', descriptionMeta.attribs.content);
+
+    const navigationRoots = domutils.findAll(
+      el => el.type === 'tag' && (el.name === 'header' || el.name === 'nav'),
+      dom.children
+    );
+    const menuTexts = [];
+    for (const navigationRoot of navigationRoots) {
+      const links = domutils.findAll(el => el.type === 'tag' && el.name === 'a', navigationRoot.children || []);
+      for (const link of links) {
+        const text = clean(domutils.getText(link));
+        if (text.length >= 2 && text.length <= 30 && !menuTexts.includes(text)) menuTexts.push(text);
+        if (menuTexts.length >= 8) break;
+      }
+      if (menuTexts.length >= 8) break;
+    }
+    if (menuTexts.length) append('메뉴', menuTexts.join(', '));
+
+    return parts.join(' | ').slice(0, 360);
+  }
+
   getStatus() {
     const visited = this.session.visitedUrls ? this.session.visitedUrls.size : 0;
     const queued = (this.session.contentQueue ? this.session.contentQueue.length : 0) +
@@ -2477,6 +2521,7 @@ class DetectEngine {
     return {
       masterId: this.session.masterId,
       masterTitle: this.session.masterTitle,
+      siteProfile: this.session.siteProfile || '',
       detectedCms: this.session.detectedCms || null,
       entryUrl: this.session.entryUrl,
       status: this.session.status,
@@ -2577,6 +2622,15 @@ class DetectEngine {
       throw new Error('올바른 웹사이트 URL을 입력해 주세요.');
     }
 
+    const requiredAiModels = [
+      ['AI_SIMILARITY_MODEL', aiModelConfig.similarity && aiModelConfig.similarity.modelId],
+      ['AI_LLM_MODEL', aiModelConfig.llm && aiModelConfig.llm.modelId]
+    ];
+    const missingAiModels = requiredAiModels.filter(([, modelId]) => !String(modelId || '').trim()).map(([name]) => name);
+    if (missingAiModels.length > 0) {
+      throw new Error(`AI 모델이 지정되지 않았습니다: ${missingAiModels.join(', ')}`);
+    }
+
     if (this.workflowPromise) {
       console.log('[DetectEngine] 이전 점검 작업 종료 대기 후 새 세션 시작');
       this.session.status = 'STOPPED';
@@ -2594,8 +2648,7 @@ class DetectEngine {
 
     const sessionId = `sess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     this.currentSessionId = sessionId;
-    this.cleanroomPatternCache = null;
-    this.cleanroomPatternLoadPromise = null;
+    this.invalidateCleanroomPatternCache();
 
     const speedDelayMs = Number(options.speedDelayMs) || 500;
     const maxPages = Number(options.maxPages) || 5000;
@@ -2650,6 +2703,7 @@ class DetectEngine {
       sessionId,
       masterId: null,
       masterTitle: null,
+      siteProfile: '',
       entryUrl: trimmedUrl,
       status: 'PLANNING',  // 1단계 탐지 계획 수립 상태로 시작
       phase: 'PLANNING',
@@ -2960,6 +3014,10 @@ class DetectEngine {
         // 최초 진입 URL (depth === 0)이거나 아직 마스터 타이틀이 없을 때 t_detect의 title 결정
         if (currentItem.depth === 0 || !this.session.masterTitle) {
           this.session.masterTitle = extractedTitle;
+          if (!this.session.siteProfile) {
+            const siteProfileSource = this.extractSiteProfile(dom, extractedTitle);
+            this.session.siteProfile = await llmPipelineService.summarizeSiteProfile(siteProfileSource);
+          }
           if (this.session.masterId && extractedTitle) {
             try {
               await commonDAO.execute_query('detectMapper.updateDetectMasterTitle', {
@@ -3189,6 +3247,7 @@ class DetectEngine {
                     const aiRes = await llmPipelineService.classifyText(evidenceText, {
                       masterId: this.session.masterId,
                       url: currentUrl,
+                      siteProfile: this.session.siteProfile || '',
                       isPolluted,
                       matchedKeyword,
                       matchedMemo
@@ -3707,19 +3766,31 @@ class DetectEngine {
     return false;
   }
 
+  invalidateCleanroomPatternCache() {
+    this.cleanroomPatternCacheVersion += 1;
+    this.cleanroomPatternCache = null;
+    this.cleanroomPatternLoadPromise = null;
+  }
+
   // 데이터 정화소(t_cleanroom) 4단계(대기, 의심, 오염, 예외) 패턴 캐시 일괄 로드
   async loadCleanroomPatterns() {
     if (this.cleanroomPatternCache) return this.cleanroomPatternCache;
-    if (!this.cleanroomPatternLoadPromise) {
-      this.cleanroomPatternLoadPromise = this.buildCleanroomPatterns();
-    }
+
+    const version = this.cleanroomPatternCacheVersion;
+    const pending = this.cleanroomPatternLoadPromise || this.buildCleanroomPatterns();
+    this.cleanroomPatternLoadPromise = pending;
 
     try {
-      const patterns = await this.cleanroomPatternLoadPromise;
+      const patterns = await pending;
+      if (version !== this.cleanroomPatternCacheVersion) {
+        return this.loadCleanroomPatterns();
+      }
       this.cleanroomPatternCache = patterns;
       return patterns;
     } finally {
-      this.cleanroomPatternLoadPromise = null;
+      if (this.cleanroomPatternLoadPromise === pending) {
+        this.cleanroomPatternLoadPromise = null;
+      }
     }
   }
 
@@ -3858,6 +3929,78 @@ class DetectEngine {
       }
 
       const style = el.attribs && el.attribs.style ? el.attribs.style.toLowerCase() : '';
+
+      // 내용 기법 검사에서 중단되더라도 동일 요소의 은닉 스타일 기법은 각각 별도로 기록한다.
+      const hiddenTechniques = [];
+      const hasTransparentStyle =
+        /opacity\s*:\s*0(\.0+)?/i.test(style) ||
+        /color\s*:\s*transparent/i.test(style) ||
+        /color\s*:\s*rgba\([^)]*,\s*0\)/i.test(style) ||
+        (style.includes('color: #fff') && style.includes('background: #fff')) ||
+        (style.includes('color: #ffffff') && style.includes('background: #ffffff')) ||
+        (style.includes('color: white') && style.includes('background: white')) ||
+        classAttr.includes('visually-hidden') ||
+        classAttr.includes('sr-only');
+      const hasOffscreenStyle =
+        (/position\s*:\s*(absolute|fixed)/i.test(style) && (/left\s*:\s*-\d{3,}/i.test(style) || /top\s*:\s*-\d{3,}/i.test(style))) ||
+        /font-size\s*:\s*(0px|0|1px)/i.test(style) ||
+        /display\s*:\s*none/i.test(style);
+      if (hasTransparentStyle) hiddenTechniques.push('TRANSPARENT');
+      if (hasOffscreenStyle) hiddenTechniques.push('OFFSCREEN');
+
+      if (hiddenTechniques.length > 0 && !isAccessibilityContent(text, classAttr) && !isNormalWebContent(text, classAttr)) {
+        const hiddenNormalizedText = normalizeFullwidth(text);
+        const hiddenPollutedMatch = findMatchedKeyword(hiddenNormalizedText, pollutedPatterns, memoMap) ||
+                                    findMatchedKeyword(text, pollutedPatterns, memoMap);
+        const hiddenSuspectMatch = findMatchedSuspectKeyword([hiddenNormalizedText, text], suspectPatterns, memoMap, requiredTermsMap);
+        const hiddenIsPolluted = Boolean(hiddenPollutedMatch);
+        const hiddenMatch = hiddenPollutedMatch || hiddenSuspectMatch;
+
+        if (hiddenMatch && (hiddenIsPolluted || !exceptionPatterns.some(c => text.includes(c)))) {
+          const matchedKw = hiddenMatch.keyword || '';
+          const matchedMemo = hiddenMatch.memo || '';
+          let isIllegal = false;
+          let aiReason = '';
+          try {
+            const aiRes = await llmPipelineService.classifyText(text, {
+              masterId: this.session.masterId,
+              url: pageUrl,
+              siteProfile: this.session.siteProfile || '',
+              isPolluted: hiddenIsPolluted,
+              matchedKeyword: matchedKw,
+              matchedMemo
+            });
+            if (aiRes) {
+              isIllegal = aiRes.isViolation;
+              aiReason = aiRes.reason;
+            }
+          } catch (e) {
+            if (hiddenIsPolluted) isIllegal = true;
+          }
+
+          if (isIllegal) {
+            const snippet = extractEvidenceSnippet(text, matchedKw);
+            const loc = this.buildCssLocation(el, dom);
+            const styleSummary = style ? style.slice(0, 50).replace(/[\r\n\t]+/g, '') : '은닉 스타일';
+            const patternTypeLabel = hiddenIsPolluted ? '오염' : '의심';
+            for (const hiddenTechnique of hiddenTechniques) {
+              const techniqueLabel = hiddenTechnique === 'TRANSPARENT' ? '투명 텍스트 은닉' : '화면 밖 은닉';
+              const reasonStr = `${techniqueLabel} (${styleSummary}) + ${patternTypeLabel} 패턴 검출 ('${matchedKw}') + AI 위반 판정${aiReason ? ` (${aiReason})` : ''}`;
+              findings.push({
+                id: `f_${String(findingIdx++).padStart(3, '0')}`,
+                url: pageUrl,
+                is_violation: true,
+                location: loc,
+                evidence_text: snippet,
+                technique: hiddenTechnique,
+                reason: reasonStr,
+                matched_keyword: matchedKw,
+                extra_finding: reasonStr
+              });
+            }
+          }
+        }
+      }
 
       // [1단계: 원문 그대로 오염 패턴 매칭 (무조건 실행)]
       // DB t_cleanroom에 등록된 오염(POLLUTED) 단어(예: 'ㅅㅓㅇㅁㅐㅁㅐ', 'ㅋㅏㅈㅣㄴㅗ' 등 자모분리 은어 및 확정 오염어)와
@@ -4014,6 +4157,7 @@ class DetectEngine {
             const aiRes = await llmPipelineService.classifyText(combined, {
               masterId: this.session.masterId,
               url: pageUrl,
+              siteProfile: this.session.siteProfile || '',
               isPolluted: false,
               matchedKeyword: suspectJamoKw,
               matchedMemo
@@ -4121,6 +4265,7 @@ class DetectEngine {
             const aiRes = await llmPipelineService.classifyText(normalized || text, {
               masterId: this.session.masterId,
               url: pageUrl,
+              siteProfile: this.session.siteProfile || '',
               isPolluted: false,
               matchedKeyword: matchedKw,
               matchedMemo
@@ -4149,147 +4294,6 @@ class DetectEngine {
         }
       }
 
-      // [기법 3] 투명 텍스트 은닉 (TRANSPARENT)
-      const isTransparentStyle =
-        /opacity\s*:\s*0(\.0+)?/i.test(style) ||
-        /color\s*:\s*transparent/i.test(style) ||
-        /color\s*:\s*rgba\([^)]*,\s*0\)/i.test(style) ||
-        (style.includes('color: #fff') && style.includes('background: #fff')) ||
-        (style.includes('color: #ffffff') && style.includes('background: #ffffff')) ||
-        (style.includes('color: white') && style.includes('background: white')) ||
-        classAttr.includes('visually-hidden') ||
-        classAttr.includes('sr-only');
-
-      if (isTransparentStyle) {
-        if (isAccessibilityContent(text, classAttr)) continue;
-        if (isNormalWebContent(text, classAttr)) continue;
-
-        const isPolluted = pollutedPatterns.some(p => text.includes(p));
-        const suspectMatchInfo = findMatchedSuspectKeyword(text, suspectPatterns, memoMap, requiredTermsMap);
-        const isSuspect = Boolean(suspectMatchInfo);
-        const matchInfo = findMatchedKeyword(text, pollutedPatterns, memoMap) || suspectMatchInfo;
-        const matchedKw = matchInfo ? matchInfo.keyword : '';
-        const matchedMemo = matchInfo ? matchInfo.memo : '';
-
-        // 불법 의심 징후 (오염DB 또는 의심DB 패턴) 감지 시 LLM에 판정 요청
-        const hasSuspicion = isPolluted || isSuspect;
-
-        let isIllegal = false;
-        let aiReason = '';
-
-        if (hasSuspicion) {
-          // [예외 단어 확인] 확정 오염이 아닌 의심 상태에서 예외 패턴이 있으면 통과
-          if (!isPolluted && exceptionPatterns.some(c => text.includes(c))) continue;
-
-          try {
-            const aiRes = await llmPipelineService.classifyText(text, {
-              masterId: this.session.masterId,
-              url: pageUrl,
-              isPolluted,
-              matchedKeyword: matchedKw,
-              matchedMemo
-            });
-            if (aiRes) {
-              isIllegal = aiRes.isViolation;
-              aiReason = aiRes.reason;
-            }
-          } catch (e) {
-            // LLM 에러 발생 시 폴백: 오염 패턴 매칭 시 불법 인정
-            if (isPolluted) isIllegal = true;
-          }
-        }
-
-        // 은닉 스타일 + 불법광고 내용이 모두 확인된 경우에만 위반 처리
-        if (isIllegal) {
-          const matchInfo = findMatchedKeyword(text, pollutedPatterns);
-          const matchedKw = matchInfo ? matchInfo.keyword : '';
-          const snippet = extractEvidenceSnippet(text, matchedKw);
-          const styleSummary = style ? style.slice(0, 50).replace(/[\r\n\t]+/g, '') : '은닉 스타일';
-          const reasonStr = `투명 은닉 스타일 (${styleSummary}) + 불법 키워드 검출 ('${matchedKw || '의심광고'}')`;
-          const loc = this.buildCssLocation(el, dom);
-
-          findings.push({
-            id: `f_${String(findingIdx++).padStart(3, '0')}`,
-            url: pageUrl,
-            is_violation: true,
-            location: loc,
-            evidence_text: snippet,
-            technique: 'TRANSPARENT',
-            reason: reasonStr,
-            matched_keyword: matchedKw,
-            extra_finding: reasonStr
-          });
-          continue;
-        }
-      }
-
-      // [기법 4] 화면 밖 은닉 (OFFSCREEN)
-      const isOffscreenStyle =
-        (/position\s*:\s*(absolute|fixed)/i.test(style) && (/left\s*:\s*-\d{3,}/i.test(style) || /top\s*:\s*-\d{3,}/i.test(style))) ||
-        /font-size\s*:\s*(0px|0|1px)/i.test(style) ||
-        /display\s*:\s*none/i.test(style);
-
-      if (isOffscreenStyle) {
-        if (isAccessibilityContent(text, classAttr)) continue;
-        if (isNormalWebContent(text, classAttr)) continue;
-
-        const isPolluted = pollutedPatterns.some(p => text.includes(p));
-        const suspectMatchInfo = findMatchedSuspectKeyword(text, suspectPatterns, memoMap, requiredTermsMap);
-        const isSuspect = Boolean(suspectMatchInfo);
-        const matchInfo = findMatchedKeyword(text, pollutedPatterns, memoMap) || suspectMatchInfo;
-        const matchedKw = matchInfo ? matchInfo.keyword : '';
-        const matchedMemo = matchInfo ? matchInfo.memo : '';
-
-        // 불법 의심 징후 (오염DB 또는 의심DB 패턴) 감지 시 LLM에 판정 요청
-        const hasSuspicion = isPolluted || isSuspect;
-
-        let isIllegal = false;
-        let aiReason = '';
-
-        if (hasSuspicion) {
-          // [예외 단어 확인] 확정 오염이 아닌 의심 상태에서 예외 패턴이 있으면 통과
-          if (!isPolluted && exceptionPatterns.some(c => text.includes(c))) continue;
-
-          try {
-            const aiRes = await llmPipelineService.classifyText(text, {
-              masterId: this.session.masterId,
-              url: pageUrl,
-              isPolluted,
-              matchedKeyword: matchedKw,
-              matchedMemo
-            });
-            if (aiRes) {
-              isIllegal = aiRes.isViolation;
-              aiReason = aiRes.reason;
-            }
-          } catch (e) {
-            // LLM 에러 발생 시 폴백: 오염 패턴 매칭 시 불법 인정
-            if (isPolluted) isIllegal = true;
-          }
-        }
-
-        if (isIllegal) {
-          const matchInfo = findMatchedKeyword(text, pollutedPatterns);
-          const matchedKw = matchInfo ? matchInfo.keyword : '';
-          const snippet = extractEvidenceSnippet(text, matchedKw);
-          const styleSummary = style ? style.slice(0, 50).replace(/[\r\n\t]+/g, '') : '은닉 스타일';
-          const reasonStr = `화면 밖 은닉 스타일 (${styleSummary}) + 불법 키워드 검출 ('${matchedKw || '의심광고'}')`;
-          const loc = this.buildCssLocation(el, dom);
-
-          findings.push({
-            id: `f_${String(findingIdx++).padStart(3, '0')}`,
-            url: pageUrl,
-            is_violation: true,
-            location: loc,
-            evidence_text: snippet,
-            technique: 'OFFSCREEN',
-            reason: reasonStr,
-            matched_keyword: matchedKw,
-            extra_finding: reasonStr
-          });
-          continue;
-        }
-      }
     }
 
     return findings;
@@ -4334,7 +4338,7 @@ class DetectEngine {
       const rawText = getVisibleCandidateText(el, getPureElementText);
       if (!rawText || rawText.length < 4) continue;
 
-      const textChunks = splitTextForTranslation(rawText, aiModelConfig.translation.maxInputChars);
+      const textChunks = splitTextForInference(rawText, aiModelConfig.inference.maxInputChars);
 
       for (const text of textChunks) {
         if (analyzedTexts.has(text)) continue;
@@ -4367,8 +4371,8 @@ class DetectEngine {
           }
         }
 
-        // 스팸 패턴과의 유사도가 고위험 임계치(0.85 이상)를 넘으면 복잡한 분해나 LLM 호출 없이 즉시 확정 차단
-        if (spamSimScore >= 0.85) {
+        // 스팸 패턴과의 유사도가 설정된 차단 기준을 넘으면 즉시 확정한다.
+        if (spamSimScore >= aiModelConfig.inference.similarityBlockThreshold) {
           const directPollutedMatch = findMatchedKeyword(text, pollutedPatterns, memoMap);
           const snippet = extractEvidenceSnippet(text, text.slice(0, 20));
           const reasonStr = `스팸 학습 패턴 고유사도 검출 (${(spamSimScore * 100).toFixed(1)}% 일치, 기준패턴: '${(matchedSpamText || '').slice(0, 25)}')`;
@@ -4546,12 +4550,12 @@ class DetectEngine {
           continue;
         }
 
-        // [5단계: t_cleanroom 의심(SUSPECT) 단어 및 중위험 유사도(0.70~0.84) AI 교차 판정]
+        // [5단계: t_cleanroom 의심(SUSPECT) 단어 및 검토 구간 유사도 AI 교차 판정]
         // 결합 평문(combinedText) 또는 원문 평문(text)에 의심 키워드가 있으면 -> 반드시 LLM에게 문맥 판정 요청!
         const suspectMatchInfo = findMatchedSuspectKeyword([combinedText, text], suspectPatterns, memoMap, requiredTermsMap);
         const isSuspectMatch = Boolean(suspectMatchInfo) ||
                                pollutedPatterns.some(p => text.includes(p) || combinedText.includes(p)) ||
-                               (spamSimScore >= 0.70);
+                               (spamSimScore >= aiModelConfig.inference.similarityReviewThreshold);
 
       if (isSuspectMatch) {
         // [예외 단어 확인] 의심 단어나 중위험 유사도 판정 시점에 예외 패턴(EXCEPTION)이 포함되어 있으면 즉시 정상 통과 (오탐 차단 및 LLM 절약)
@@ -4569,7 +4573,13 @@ class DetectEngine {
 
         try {
           const textForAi = combinedText || text;
-          let aiRes = llmCache.get(textForAi);
+          const llmCacheKey = JSON.stringify([
+            textForAi,
+            matchedKw || '',
+            matchedMemo || '',
+            this.session.siteProfile || ''
+          ]);
+          let aiRes = llmCache.get(llmCacheKey);
           if (!aiRes && pageLlmCount < maxPageLlmCount) {
             pageLlmCount++;
             const remainSecAi = Math.max(0, Math.floor((this.session.scanDeadlineAtMs - Date.now()) / 1000));
@@ -4579,12 +4589,14 @@ class DetectEngine {
             aiRes = await llmPipelineService.classifyText(textForAi, {
               masterId: this.session.masterId,
               url: pageUrl,
+              siteProfile: this.session.siteProfile || '',
               isPolluted: false,
               matchedKeyword: matchedKw,
-              matchedMemo
+              matchedMemo,
+              similarityScore: spamSimScore
             });
             if (aiRes) {
-              llmCache.set(textForAi, aiRes);
+              llmCache.set(llmCacheKey, aiRes);
             }
           }
 
@@ -4673,7 +4685,7 @@ class DetectEngine {
 
     // 두 파일을 매번 새로 생성하여 이전 점검의 추가 탐지 결과가 남지 않도록 함
     try {
-      const rootResultPath = path.join(__dirname, '..', 'result.json');
+      const rootResultPath = path.join(config.paths.outputDir, 'result.json');
       fs.writeFileSync(rootResultPath, JSON.stringify(reports.main, null, 2), 'utf8');
       console.log(`[DetectEngine] result.json 표준 결과 파일 생성 완료: ${rootResultPath}`);
     } catch (fsErr) {
@@ -4681,7 +4693,7 @@ class DetectEngine {
     }
 
     try {
-      const extraPath = path.join(__dirname, '..', 'result_extra.json');
+      const extraPath = path.join(config.paths.outputDir, 'result_extra.json');
       fs.writeFileSync(extraPath, JSON.stringify(reports.extra, null, 2), 'utf8');
       console.log(`[DetectEngine] result_extra.json 추가 탐지 결과 파일 생성 완료: ${extraPath}`);
     } catch (fsErr) {

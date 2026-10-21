@@ -170,6 +170,18 @@
 			transform: translate3d(20px, 0, 0);
 		}
 
+		.llm-first-load-note {
+			padding: 6px 10px;
+			margin-bottom: 8px;
+			font-size: 0.82rem;
+			font-weight: 700;
+			line-height: 1.25;
+			color: var(--bs-primary);
+			text-align: center;
+			background: rgba(13, 110, 253, 0.09);
+			border: 1px solid rgba(13, 110, 253, 0.16);
+			border-radius: 0.5rem;
+		}
 		.llm-runner-stage {
 			position: relative;
 			height: 112px;
@@ -466,6 +478,7 @@
 		<div id="llm-progress-container"
 			class="position-fixed bottom-0 end-0 m-3 p-3 bg-body border rounded-3 shadow-lg d-none"
 			style="z-index: 1060; width: 330px; max-width: calc(100vw - 30px); transition: opacity 0.4s ease;">
+			<div class="llm-first-load-note">처음 한번만 다운로드 됩니다.</div>
 			<div class="llm-runner-stage" aria-hidden="true">
 				<div id="llm-runner-pack" class="llm-runner-pack">
 					<img class="llm-runner-layer llm-runner-robot" src="/assets/img/llm-runner.png" alt="" draggable="false">

@@ -28,7 +28,20 @@ function hasContentDescendant(element) {
   return found;
 }
 
-function splitTextForTranslation(text, maxChars = 180) {
+function stripLeadingTitleMarkers(text) {
+  const original = String(text || '').trim();
+  let cleaned = original;
+
+  while (cleaned) {
+    const next = cleaned.replace(/^\s*(?:\[[^\]\r\n]{1,40}\]|［[^］\r\n]{1,40}］)\s*/u, '');
+    if (next === cleaned) break;
+    cleaned = next.trimStart();
+  }
+
+  return cleaned || original;
+}
+
+function splitTextForInference(text, maxChars = 180) {
   const limit = Math.max(40, Number(maxChars) || 180);
   const segmenter = new Intl.Segmenter('ko', { granularity: 'sentence' });
   const parts = [];
@@ -64,4 +77,4 @@ function splitTextForTranslation(text, maxChars = 180) {
   return parts;
 }
 
-module.exports = { getVisibleCandidateText, splitTextForTranslation };
+module.exports = { getVisibleCandidateText, splitTextForInference, stripLeadingTitleMarkers };

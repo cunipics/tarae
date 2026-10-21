@@ -19,7 +19,7 @@ Tarae 화면
   └─ 사용자 설정 변경 API
 ```
 
-AI 분석은 문장 유사도 확인, 번역, 텍스트 분류 순서로 진행됩니다. 모델은 설치 파일에 넣지 않으며, AI 기능을 처음 사용할 때 내려받아 사용자 폴더에 보관합니다.
+AI 분석은 문장 유사도 확인과 한국어 LLM 문맥 판정의 2단계로 진행됩니다. 모델은 설치 파일에 넣지 않으며, AI 기능을 처음 사용할 때 내려받아 사용자 폴더에 보관합니다.
 
 ## 화면
 
@@ -56,11 +56,13 @@ Copy-Item .env.example .env
 REMOTE_LOGIN_API_URL=여기에 로그인 API URL 입력
 REMOTE_UPDATE_API_URL=여기에 관리자 정보 업데이트 API URL 입력
 
-# 값을 지정하지 않으면 config/aiModel.config.js의 기본값을 사용합니다.
+# 두 AI 모델 ID는 모두 반드시 지정해야 합니다.
 AI_SIMILARITY_MODEL=exp-models/dragonkue-KoEn-E5-Tiny-ONNX
-AI_TRANSLATION_MODEL=Xenova/nllb-200-distilled-600M
-AI_LLM_MODEL=onnx-community/bert-tiny-finetuned-sms-spam-detection-ONNX
+AI_LLM_MODEL=onnx-community/gemma-3-1b-it-ONNX-GQA
 AI_DTYPE=q8
+AI_TEXT_MAX_INPUT_CHARS=180
+AI_SIMILARITY_REVIEW_THRESHOLD=0.70
+AI_SIMILARITY_BLOCK_THRESHOLD=0.85
 ```
 
 실제 `.env` 파일에는 운영 서버 주소나 비밀정보가 들어갈 수 있으므로 공개 저장소에 올리지 마십시오.
@@ -73,19 +75,11 @@ AI_DTYPE=q8
 
 [모델 정보](https://huggingface.co/exp-models/dragonkue-KoEn-E5-Tiny-ONNX)
 
-### 번역
+### 불법 광고 판정
 
-`Xenova/nllb-200-distilled-600M`은 여러 언어로 작성된 문장을 분석에 사용할 언어로 번역합니다. 처음 내려받을 때에는 모델 크기만큼 시간이 걸릴 수 있습니다.
+`onnx-community/gemma-3-1b-it-ONNX-GQA`는 한국어 원문, 사이트 성격과 단어 설명을 함께 읽고 외부 광고 또는 검색 오염 문구인지 판정합니다. 홍보 목적과 사이트 관련성을 차례로 확인하며, 문장 앞의 짧은 대괄호 말머리는 판정에서 제외합니다.
 
-[모델 정보](https://huggingface.co/Xenova/nllb-200-distilled-600M)
-
-이 모델은 `CC BY-NC 4.0` 조건으로 공개되어 있습니다. 상업적인 용도로 사용하려면 모델의 라이선스 조건을 먼저 확인해야 합니다.
-
-### 텍스트 분류
-
-`onnx-community/bert-tiny-finetuned-sms-spam-detection-ONNX`는 문장을 분류해 의심 콘텐츠 판정에 참고합니다. SMS 스팸 데이터로 학습된 작은 모델이므로 실제 자료로 결과를 확인한 뒤 사용하십시오.
-
-[모델 정보](https://huggingface.co/onnx-community/bert-tiny-finetuned-sms-spam-detection-ONNX)
+[모델 정보](https://huggingface.co/onnx-community/gemma-3-1b-it-ONNX-GQA)
 
 `AI_DTYPE=q8`은 8비트 양자화 모델을 사용한다는 뜻입니다. 메모리 사용량과 실행 속도의 균형을 맞추기 위한 기본 설정입니다.
 
@@ -195,4 +189,4 @@ Tarae(타래)는 대한민국 프로그램 저작권으로 등록되어 있습�
 - 접수번호: `2026-061499`
 - 등록번호: `C-2026-049841`
 
-Tarae의 원본 소스 코드는 [MIT License](LICENSE)에 따라 사용, 수정 및 배포할 수 있습니다. 외부 라이브러리와 AI 모델에는 각 제작자가 정한 별도 라이선스가 적용됩니다.
+Tarae의 원본 소스 코드는 [GNU General Public License v3.0 (GPL v3)](LICENSE)에 따라 사용, 수정 및 배포할 수 있습니다. 외부 라이브러리와 AI 모델에는 각 제작자가 정한 별도 라이선스가 적용됩니다.

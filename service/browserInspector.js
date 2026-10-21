@@ -93,7 +93,7 @@ async function closeBrowser() {
  * @param {number} timeoutMs - 페이지 로딩 타임아웃 (기본 15초)
  * @returns {Array} 검출된 은닉 요소 목록
  */
-async function inspectPageDetails(url, timeoutMs = 15000, options = {}) {
+async function inspectPageDetailsInternal(url, timeoutMs = 15000, options = {}) {
   const results = [];
   const renderedLinks = [];
   let renderedHtml = '';
@@ -633,6 +633,29 @@ async function inspectPageDetails(url, timeoutMs = 15000, options = {}) {
     links: renderedLinks,
     html: renderedHtml
   };
+}
+
+async function inspectPageDetails(url, timeoutMs = 15000, options = {}) {
+  const effectiveTimeoutMs = Math.max(3000, Number(timeoutMs) || 15000);
+  const inspectionPromise = inspectPageDetailsInternal(url, effectiveTimeoutMs, options);
+  let deadlineTimer = null;
+
+  const deadlinePromise = new Promise(resolve => {
+    deadlineTimer = setTimeout(async () => {
+      console.warn(`[BrowserInspector] 검사 종료 제한 초과(${effectiveTimeoutMs + 2000}ms), 빈 결과로 다음 URL 진행:`, url);
+      try {
+        await closeBrowser();
+      } catch (e) {}
+      resolve({ findings: [], links: [], html: '' });
+    }, effectiveTimeoutMs + 2000);
+  });
+
+  try {
+    return await Promise.race([inspectionPromise, deadlinePromise]);
+  } finally {
+    if (deadlineTimer) clearTimeout(deadlineTimer);
+    inspectionPromise.catch(() => {});
+  }
 }
 
 async function inspectPage(url, timeoutMs = 15000) {

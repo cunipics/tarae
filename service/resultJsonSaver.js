@@ -1,7 +1,7 @@
 const fs = require('fs/promises');
 const path = require('path');
 
-async function saveResultJson(payload, { app }) {
+async function saveResultJson(payload, { app, outputDir } = {}) {
   const content = payload && payload.content;
   if (typeof content !== 'string' || !content.trim()) {
     return { status: 'error', message: '저장할 JSON 내용이 없습니다.' };
@@ -17,26 +17,13 @@ async function saveResultJson(payload, { app }) {
   }
 
   const suggestedName = payload.suggestedName === 'result_extra.json' ? 'result_extra.json' : 'result.json';
-  const now = new Date();
-  const pad = value => String(value).padStart(2, '0');
-  const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-  const downloadsPath = app.getPath('downloads');
+  const targetDir = outputDir || (app && app.isPackaged ? path.dirname(process.execPath) : path.join(__dirname, '..'));
 
   try {
-    for (let number = 0; number < 1000; number++) {
-      const suffix = number ? `_${number}` : '';
-      const folderPath = path.join(downloadsPath, `FCMS_${stamp}${suffix}`);
-      try {
-        await fs.mkdir(folderPath);
-      } catch (error) {
-        if (error.code === 'EEXIST') continue;
-        throw error;
-      }
-      const filePath = path.join(folderPath, suggestedName);
-      await fs.writeFile(filePath, content, 'utf8');
-      return { status: 'saved', path: filePath };
-    }
-    return { status: 'error', message: '같은 이름의 저장 파일이 너무 많습니다.' };
+    await fs.mkdir(targetDir, { recursive: true });
+    const filePath = path.join(targetDir, suggestedName);
+    await fs.writeFile(filePath, content, 'utf8');
+    return { status: 'saved', path: filePath };
   } catch (error) {
     return { status: 'error', message: error.message };
   }

@@ -30,7 +30,7 @@ test('점검 회차별 결과는 표준 기법과 추가 탐지를 분리하고 
   assert.equal(reports.extra.findings[0].id, 'f_001');
 });
 
-test('Electron 저장은 다운로드 폴더에 정확한 제출 파일명을 쓴다', async t => {
+test('Electron 저장은 실행 파일 폴더에 정확한 제출 파일명을 쓴다', async t => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'fcms-result-test-'));
   t.after(async () => {
     if (path.dirname(tempDir) === os.tmpdir() && path.basename(tempDir).startsWith('fcms-result-test-')) {
@@ -38,11 +38,10 @@ test('Electron 저장은 다운로드 폴더에 정확한 제출 파일명을 �
     }
   });
   const content = JSON.stringify({ meta: {}, findings: [] });
-  const app = { getPath: name => name === 'downloads' ? tempDir : null };
-  const saved = await saveResultJson({ content, suggestedName: 'result_extra.json' }, { app });
+  const saved = await saveResultJson({ content, suggestedName: 'result_extra.json' }, { outputDir: tempDir });
   assert.equal(saved.status, 'saved');
   assert.equal(path.basename(saved.path), 'result_extra.json');
-  assert.equal(path.dirname(path.dirname(saved.path)), tempDir);
+  assert.equal(path.dirname(saved.path), tempDir);
   assert.equal(await fs.readFile(saved.path, 'utf8'), content);
 });
 
@@ -59,5 +58,6 @@ test('검색 오염 탐지는 추가 결과에서 세부 기법을 유지한다'
 
   const reports = buildResultReports(master, rows);
   assert.equal(reports.main.findings.length, 0);
-  assert.deepEqual(reports.extra.findings.map(item => item.technique), ['NONSTANDARD_PORT', 'REFLECTED_SEARCH']);
+  assert.deepEqual(reports.extra.findings.map(item => item.technique), ['ETC', 'ETC']);
+  assert.deepEqual(reports.extra.findings.map(item => item.extra_finding), ['색인 오염', '반사형 검색 오염']);
 });

@@ -1,8 +1,8 @@
 /**
- * AI 탐지 모델(3종 q8) 실시간 로딩 상태 관리자
- * - Xenova/multilingual-e5-small (q8)
- * - Xenova/opus-mt-ko-en (q8)
- * - onnx-community/Qwen2.5-0.5B-Instruct (q8)
+ * AI 탐지 모델(2종 q8) 실시간 로딩 상태 관리자
+ * - 문맥 유사도 모델
+
+ * - 환경 변수로 지정된 판정 LLM
  */
 
 (function () {
@@ -128,7 +128,7 @@
   // 전역 가드 함수: 로딩 완료 전 기능 실행 차단
   window.checkLLMReady = function (customMessage) {
     if (!window.isLLMReady) {
-      alert(customMessage || 'AI 탐지 모델(3종 q8)이 아직 로딩 중입니다.\n로딩이 완료된 후 다시 시도해 주세요.');
+      alert(customMessage || 'AI 탐지 모델(2종 q8)이 아직 로딩 중입니다.\n로딩이 완료된 후 다시 시도해 주세요.');
       return false;
     }
     return true;

@@ -2294,12 +2294,12 @@
     if (resultBox) {
       resultBox.classList.remove('d-none');
     }
-    if (labelEl) labelEl.textContent = '3단계 AI 모델 심층 분석 중...';
+    if (labelEl) labelEl.textContent = '2단계 AI 모델 심층 분석 중...';
     if (badgeEl) {
       badgeEl.className = 'badge text-bg-warning';
       badgeEl.textContent = '연산 중';
     }
-    if (transEl) transEl.textContent = '번역 모델(opus-mt) 및 LLM(Qwen2.5) 추론 중...';
+    if (transEl) transEl.textContent = '유사도 분석 및 LLM 판정 중...';
     if (reasonEl) reasonEl.textContent = '잠시만 기다려 주세요.';
 
     try {
@@ -2327,7 +2327,7 @@
           badgeEl.textContent = `정상 판정 (${r.confidence}%)`;
         }
 
-        transEl.textContent = `영문 번역: "${r.englishText || '-'}" (유사도: ${r.similarityScore || 0})`;
+        transEl.textContent = `분석 원문: "${r.koreanText || '-'}" (유사도: ${r.similarityScore || 0})`;
         reasonEl.textContent = `판정 이유: ${r.reason || '-'}`;
       } else {
         labelEl.textContent = '판정 실패: ' + (data.msg || '알 수 없는 오류');
