@@ -32,7 +32,8 @@ module.exports = {
   },
   paths: {
     resDir: path.join(__dirname, '..', 'res'),
-    logsDir: path.join(__dirname, '..', 'logs'),
+    logsDir: process.env.TARAE_LOGS_DIR || path.join(__dirname, '..', 'logs'),
+    outputDir: process.env.TARAE_OUTPUT_DIR || path.join(__dirname, '..'),
     routesDir: path.join(__dirname, '..', 'routes')
   },
   ai: require('./aiModel.config'),
