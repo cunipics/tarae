@@ -81,6 +81,45 @@ test('다음 버튼 없이 숫자 버튼만 있는 동적 게시판도 끝까지
   }
 });
 
+test('AJAX 목록의 div 이동 요소와 a onclick 쪽 이동을 끝까지 수집한다', async () => {
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    res.end(`<!doctype html><html><head><meta property="og:type" content="article"></head><body>
+      <ul id="items"></ul><div class="paging" id="paging"></div><script>
+      let currentPage = 1;
+      function movePage(page) { currentPage = page; setTimeout(render, 20); }
+      function render() {
+        document.querySelector('#items').innerHTML = [1, 2, 3].map(item =>
+          '<li class="item"><div onclick="location.href=\\'/detail?seq=' + (currentPage * 10 + item) + '\\'">제품 ' + currentPage + '-' + item + '</div></li>'
+        ).join('');
+        document.querySelector('#paging').innerHTML = [1, 2, 3].map(page =>
+          '<a href="javascript:void(0)" class="' + (page === currentPage ? 'on' : '') + '" onclick="movePage(' + page + ')">' + page + '</a>'
+        ).join('');
+      }
+      setTimeout(render, 20);
+    </script></body></html>`);
+  });
+
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const origin = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const details = await browserInspector.inspectPageDetails(`${origin}/products`, 5000);
+    const detailLinks = details.links
+      .filter(link => link.fromRepeatedItem)
+      .map(link => link.href)
+      .filter(href => href.includes('/detail?seq='));
+    assert.equal(detailLinks.length, 9);
+    assert.equal(detailLinks.includes(`${origin}/detail?seq=11`), true);
+    assert.equal(detailLinks.includes(`${origin}/detail?seq=33`), true);
+  } finally {
+    await browserInspector.closeBrowser();
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
 test('정적 페이지 검사는 페이지 스크립트를 실행하지 않는다', async () => {
   const server = http.createServer((req, res) => {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });

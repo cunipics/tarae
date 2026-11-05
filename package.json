@@ -1,6 +1,6 @@
 {
   "name": "tarae_cms",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "private": true,
   "main": "main.js",
   "type": "commonjs",

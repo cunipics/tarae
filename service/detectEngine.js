@@ -633,8 +633,8 @@ function isBoardListPage(dom, resolvedUrl) {
       if (r.parent && Array.isArray(r.parent.children)) {
         const siblings = r.parent.children.filter(c => c.type === 'tag' && c.name.toLowerCase() === r.name.toLowerCase());
         if (siblings.length >= 4) {
-          const hasLink = domutils.findOne(el => el.type === 'tag' && el.name === 'a', r.children || []);
-          if (hasLink) {
+          const hasNavigationTarget = domutils.findOne(el => isNavigableLinkElement(el), r.children || []);
+          if (hasNavigationTarget) {
             repeatedRowCount = siblings.length;
             break;
           }
@@ -649,8 +649,8 @@ function isBoardListPage(dom, resolvedUrl) {
         if (c.parent && Array.isArray(c.parent.children)) {
           const siblings = c.parent.children.filter(s => s.type === 'tag' && s.name.toLowerCase() === c.name.toLowerCase());
           if (siblings.length >= 3) {
-            const hasLink = domutils.findOne(el => el.type === 'tag' && el.name === 'a', c.children || []);
-            if (hasLink) {
+            const hasNavigationTarget = domutils.findOne(el => isNavigableLinkElement(el), c.children || []);
+            if (hasNavigationTarget) {
               repeatedRowCount = siblings.length;
               break;
             }
@@ -662,9 +662,21 @@ function isBoardListPage(dom, resolvedUrl) {
     if (repeatedRowCount < 3) return false;
 
     // 2. 하단 페이징 영역(Pagination) 구조 검사 (단어 매칭 없이 URL 파라미터 및 경로 수열 구조 검사)
-    const allLinks = domutils.findAll(el => el.type === 'tag' && el.name === 'a', dom.children);
+    const allLinks = domutils.findAll(el => el.type === 'tag' &&
+      (el.name === 'a' || el.name === 'button' || (el.attribs && el.attribs.role === 'button')), dom.children);
     let numberPageLinkCount = 0;
     let hasPagingParam = false;
+
+    const isInsidePagingArea = element => {
+      let current = element;
+      for (let depth = 0; current && depth < 6; depth++, current = current.parent) {
+        if (current.type !== 'tag') continue;
+        const attrs = current.attribs || {};
+        const marker = `${attrs.id || ''} ${attrs.class || ''} ${attrs['aria-label'] || ''}`;
+        if (current.name === 'nav' || /(?:pagination|paging|pager|page-nav)/i.test(marker)) return true;
+      }
+      return false;
+    };
 
     for (const a of allLinks) {
       const text = domutils.getText(a).trim();
@@ -674,6 +686,14 @@ function isBoardListPage(dom, resolvedUrl) {
         hasPagingParam = true;
         if (/^\d+$/.test(text)) {
           numberPageLinkCount++;
+        }
+      }
+
+      if (!pagingInfo && /^\d+$/.test(text) && isInsidePagingArea(a)) {
+        numberPageLinkCount++;
+        const attrs = a.attribs || {};
+        if (attrs.onclick || attrs['data-page'] || attrs['data-page-number'] || attrs.href) {
+          hasPagingParam = true;
         }
       }
     }
@@ -799,12 +819,14 @@ function extractBoardSpec(dom, currentUrl) {
     let detectedPageParam = 'page';
     let detectedPathKeyword = 'page';
     let detectedBasePath = null;
+    let hasBuildablePagingPattern = false;
 
     for (const a of allLinks) {
       const text = domutils.getText(a).trim();
       const rawHref = a.attribs ? (a.attribs.href || '') : '';
       const pagingInfo = parsePagingInfoFromHref(rawHref, text);
       if (pagingInfo) {
+        hasBuildablePagingPattern = true;
         if (pagingInfo.pageNum > maxPageFromLinks) {
           maxPageFromLinks = pagingInfo.pageNum;
         }
@@ -824,11 +846,16 @@ function extractBoardSpec(dom, currentUrl) {
     // 현재 URL 파라미터 확인 (URL 자체가 이미 쿼리스트링 페이징을 품고 있는 경우 우선 반영)
     for (const key of ['page', 'pageid', 'p', 'cpage', 'pg', 'page_no', 'pageindex', 'pagenum', 'curpage']) {
       if (searchParams.has(key)) {
+        hasBuildablePagingPattern = true;
         detectedPagingType = 'query';
         detectedPageParam = key;
         break;
       }
     }
+
+    // 클릭이나 AJAX로만 이동하는 목록은 실제 브라우저 조작으로 수집하며,
+    // 확인되지 않은 쪽 주소를 임의로 만들지 않는다.
+    if (!hasBuildablePagingPattern) return null;
 
     // baseKey 결정
     let baseKey = '';
@@ -3101,8 +3128,10 @@ class DetectEngine {
         const articleMeta = domutils.findOne(el => el.type === 'tag' && el.name === 'meta' &&
           el.attribs && (el.attribs.property || '').toLowerCase() === 'og:type' &&
           (el.attribs.content || '').toLowerCase() === 'article', dom.children);
-        const isCurrentArticle = currentItem.isArticle || isArticleDetailPageUrl(currentUrl) || Boolean(articleMeta);
-        const isCurrentBoardList = !isCurrentArticle && (currentItem.isBoardList || isBoardListPage(dom, currentUrl));
+        const structurallyLooksLikeList = isBoardListPage(dom, currentUrl);
+        const isCurrentArticle = currentItem.isArticle || isArticleDetailPageUrl(currentUrl) ||
+          (Boolean(articleMeta) && !structurallyLooksLikeList);
+        const isCurrentBoardList = !isCurrentArticle && (currentItem.isBoardList || structurallyLooksLikeList);
         if (isCurrentBoardList) {
           const spec = extractBoardSpec(dom, currentUrl);
           if (spec && !this.session.discoveredBoards.has(spec.baseKey)) {
@@ -3329,8 +3358,10 @@ class DetectEngine {
           // 버튼 방식으로 이동한 동적 게시판의 다른 쪽에서 확보한 상세 링크
           for (const renderedLink of browserInspection.links || []) {
             const resolvedRenderedUrl = this.resolveUrl(origin, currentUrl, renderedLink.href);
+            const isRenderedArticleCandidate = isArticleDetailPageUrl(resolvedRenderedUrl) ||
+              (renderedLink.fromRepeatedItem === true && renderedLink.insideNavigation !== true);
             if (!resolvedRenderedUrl || !isSameDomain(resolvedRenderedUrl, entryUrl) ||
-                !isArticleDetailPageUrl(resolvedRenderedUrl) || isNonContentLink(resolvedRenderedUrl, null)) {
+                !isRenderedArticleCandidate || isNonContentLink(resolvedRenderedUrl, null)) {
               continue;
             }
             const renderedKey = normalizeUrl(resolvedRenderedUrl);
@@ -4771,6 +4802,7 @@ detectEngine._testing = {
   selectReflectionProbePattern,
   buildReflectionProbeUrl,
   inspectReflectedProbeHtml,
+  isBoardListPage,
   isNavigableLinkElement,
   hasBoardAuthoringControl,
   isExposedIndexBoard

@@ -201,10 +201,57 @@ async function inspectPageDetailsInternal(url, timeoutMs = 15000, options = {}) 
       renderedHtml = await page.content();
       const collectedLinkUrls = new Set();
       const collectCurrentLinks = async () => {
-        const links = await page.evaluate(() => Array.from(document.querySelectorAll('a[href]')).map(anchor => ({
-          href: anchor.href || anchor.getAttribute('href') || '',
-          text: (anchor.innerText || anchor.textContent || '').replace(/\s+/g, ' ').trim()
-        })));
+        const links = await page.evaluate(() => {
+          const candidates = Array.from(document.querySelectorAll(
+            'a[href], area[href], [data-href], [data-url], [onclick]'
+          ));
+
+          const extractTarget = element => {
+            const href = (element.getAttribute('href') || '').trim();
+            const dataTarget = (element.getAttribute('data-href') || element.getAttribute('data-url') || '').trim();
+            if (href && !/^javascript:/i.test(href) && href !== '#') return href;
+            if (dataTarget) return dataTarget;
+
+            const onclick = (element.getAttribute('onclick') || '').trim();
+            const directMatch = onclick.match(/(?:location(?:\.href)?\s*=\s*|window\.open\(\s*)['"]([^'"]+)['"]/i);
+            if (directMatch) return directMatch[1];
+
+            const functionMatch = onclick.match(/(?:^|[;\s])[$\w.]+\s*\(\s*['"]((?:https?:\/\/|\/|\.\.?\/|\?)[^'"]*)['"]/i);
+            return functionMatch ? functionMatch[1] : '';
+          };
+
+          const isRepeatedItem = element => {
+            let current = element;
+            for (let depth = 0; current && depth < 5; depth++, current = current.parentElement) {
+              const tagName = (current.tagName || '').toLowerCase();
+              const className = typeof current.className === 'string' ? current.className : '';
+              const rowLike = ['tr', 'li', 'article'].includes(tagName) ||
+                (tagName === 'div' && /(?:item|card|post|entry|board|list|row)/i.test(className));
+              if (!rowLike || !current.parentElement) continue;
+              const sameTagSiblings = Array.from(current.parentElement.children)
+                .filter(sibling => (sibling.tagName || '').toLowerCase() === tagName);
+              if (sameTagSiblings.length >= 3) return true;
+            }
+            return false;
+          };
+
+          return candidates.map(element => {
+            const rawTarget = extractTarget(element);
+            if (!rawTarget) return null;
+            try {
+              const href = new URL(rawTarget, document.baseURI).href;
+              if (!/^https?:/i.test(href)) return null;
+              return {
+                href,
+                text: (element.innerText || element.textContent || '').replace(/\s+/g, ' ').trim(),
+                fromRepeatedItem: isRepeatedItem(element),
+                insideNavigation: Boolean(element.closest('nav, header, footer'))
+              };
+            } catch (e) {
+              return null;
+            }
+          }).filter(Boolean);
+        });
         for (const link of links) {
           if (!link.href || collectedLinkUrls.has(link.href)) continue;
           collectedLinkUrls.add(link.href);
@@ -225,7 +272,9 @@ async function inspectPageDetailsInternal(url, timeoutMs = 15000, options = {}) 
             '[class*="pagination"], [class*="paging"], [id*="pagination"], [id*="paging"], nav[aria-label]'
           ));
           const container = containers.find(element => {
-            const controls = Array.from(element.querySelectorAll('button, [role="button"]'));
+            const controls = Array.from(element.querySelectorAll(
+              'a, button, [role="button"], [onclick], [data-page], [data-page-number]'
+            ));
             const numericCount = controls.filter(control => /^\d+$/.test((control.textContent || '').trim())).length;
             const hasMoveControl = controls.some(control => {
               const label = `${control.className || ''} ${control.getAttribute('aria-label') || ''} ${control.textContent || ''}`;
@@ -235,8 +284,10 @@ async function inspectPageDetailsInternal(url, timeoutMs = 15000, options = {}) 
           });
           if (!container) return { clicked: false, state: '' };
 
-          const controls = Array.from(container.querySelectorAll('button, [role="button"]'));
-          const active = container.querySelector('[aria-current="page"], .is-active, .active, .current');
+          const controls = Array.from(container.querySelectorAll(
+            'a, button, [role="button"], [onclick], [data-page], [data-page-number]'
+          ));
+          const active = container.querySelector('[aria-current="page"], .is-active, .active, .current, .on');
           const current = (active?.textContent || '').trim();
           const isDisabled = control => !control || control.disabled ||
             control.getAttribute('aria-disabled') === 'true' ||

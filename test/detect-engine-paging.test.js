@@ -9,6 +9,7 @@ const {
   getBoardIdentityKey,
   needsDynamicLinkDiscovery,
   isArticleDetailPageUrl,
+  isBoardListPage,
   hasBoardAuthoringControl,
   isExposedIndexBoard
 } = detectEngine._testing;
@@ -36,6 +37,20 @@ test('pageid 쪽 번호와 page_id 게시판 식별자를 구분한다', () => {
   assert.equal(spec.totalPage, 786);
   assert.equal(getBoardIdentityKey('http://example.test/?page_id=778&pageid=4'), '/?page_id=778');
   assert.equal(getBoardIdentityKey('http://example.test/?page_id=999&pageid=4'), '/?page_id=999');
+});
+
+test('반복 항목과 a onclick 쪽 이동이 있는 동적 목록을 목록으로 판정한다', () => {
+  const html = `
+    <meta property="og:type" content="article">
+    <ul>${[1, 2, 3, 4].map(index => `<li class="item"><div onclick="location.href='/detail?seq=${index}'">제품 ${index}</div></li>`).join('')}</ul>
+    <div class="paging">
+      <a href="javascript:void(0)" class="on">1</a>
+      <a href="javascript:void(0)" onclick="movePage(2)">2</a>
+      <a href="javascript:void(0)" onclick="movePage(3)">3</a>
+    </div>`;
+  const dom = htmlparser2.parseDocument(html);
+
+  assert.equal(isBoardListPage(dom, 'https://example.test/products'), true);
 });
 
 test('게시물 읽기 주소는 목록 쪽 번호가 있어도 게시물로 유지한다', () => {

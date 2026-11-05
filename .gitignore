@@ -30,3 +30,5 @@ scratch_*.html
 
 # Held back from publication
 t_schema.sql
+result.json
+result_extra.json
